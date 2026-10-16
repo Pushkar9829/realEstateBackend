@@ -340,13 +340,16 @@ function listListers(query) {
   if (query.kycStatus) filter['kyc.status'] = query.kycStatus;
   if (query.listerType) filter.listerType = query.listerType;
   if (query.q) filter.$or = ['name', 'email', 'phone'].map((f) => ({ [f]: new RegExp(String(query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') }));
-  return paginate(User, filter, query, { projection: 'name email phone listerType kyc.status kyc.submittedAt listingLimit createdAt' });
+  if (query.brandPending === 'true') filter['brand.pending.name'] = { $exists: true, $ne: null };
+  return paginate(User, filter, query, { projection: 'name email phone listerType kyc.status kyc.submittedAt listingLimit brand.name brand.approved brand.pending createdAt' });
 }
 
 async function listerDetail(id) {
   const base = await detail(id);
   base.flags = await BrokerFlag.find({ listerId: id }).sort({ createdAt: -1 }).lean();
-  base.listingLimit = await listingLimitFor(await User.findById(id));
+  const u = await User.findById(id);
+  base.listingLimit = await listingLimitFor(u);
+  if (u.listerType === 'builder') base.brand = require('./brand.service').brandView(u); // RE-B-02
   return base;
 }
 

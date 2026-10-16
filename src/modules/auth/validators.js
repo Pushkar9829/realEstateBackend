@@ -95,6 +95,6 @@ module.exports = {
     teamId: objectId.optional(),
     permissions: z.array(z.string()).max(40).default([]),
   }),
-  staffEdit: z.object({ name: name.optional(), teamId: objectId.nullable().optional(), permissions: z.array(z.string()).max(40).optional() }).strict(),
+  staffEdit: z.object({ name: name.optional(), role: z.enum(['agent', 'manager', 'admin']).optional(), teamId: objectId.nullable().optional(), permissions: z.array(z.string()).max(40).optional() }).strict(),
   staffDisable: z.object({ reason: z.string().trim().min(3).max(300), reassignTo: objectId.optional() }),
 };

@@ -23,9 +23,12 @@ router.delete('/me/totp', ...g.anyUser, c.disableTotpOtpRequired); // any: Disab
 router.get('/me/sessions', ...g.anyUser, c.sessions); // any: Sessions
 router.get('/me/login-history', ...g.anyUser, c.history); // any: History
 router.post('/me/become-lister', ...g.buyer, c.convertToLister); // buyer: Convert to lister
+router.get('/me/deletion-request', ...g.buyerOrLister, c.myDeletionRequest); // buyer, lister: My latest deletion request (account page)
 router.post('/me/deletion-request', ...g.buyerOrLister, c.requestDeletion); // buyer, lister: Request deletion
 router.get('/me/consents', ...g.anyUser, c.consentLedger); // any logged in: Consent ledger
+router.post('/me/consents', ...g.anyUser, c.giveAConsent); // any logged in: Give a consent (analytics, WhatsApp updates, marketing)
 router.post('/me/consents/:purpose/withdraw', ...g.anyUser, c.withdrawAConsent); // any logged in: Withdraw a consent
 router.post('/me/data-export', ...g.anyUser, c.prepareMyDataDownload); // any logged in: Prepare my data download
+router.get('/me/data-export', ...g.anyUser, c.myDataDownload); // any logged in: Status of my data download, link when ready
 
 module.exports = router;

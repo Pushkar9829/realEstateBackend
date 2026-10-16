@@ -15,6 +15,8 @@ function registerAll() {
   // Shared job types
   jobs.register('notify.email', (p) => notify.sendEmail(p));
   jobs.register('notify.sms', (p) => notify.sendSms(p));
+  // RE-K-08: WhatsApp with SMS fallback (notifications service decides who gets it)
+  jobs.register('notify.whatsapp', (p) => require('./modules/notifications/service').deliverWhatsapp(p));
 
   // MLM outbox delivery every 30 s (no-op until mlm.enabled and MLM_ENGINE_URL are set)
   jobs.every('mlm.outbox.dispatch', 30 * 1000, async () => {

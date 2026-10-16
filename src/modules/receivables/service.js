@@ -135,6 +135,14 @@ async function listFilter(user, query) {
   if (query.status) filter.status = { $in: String(query.status).split(',') };
   if (query.listerId) filter.listerId = query.listerId;
   if (query.agentId) filter.agentId = query.agentId;
+  if (query.city) { // RE-D-08: the listing's or project's city, via the deal
+    const { Deal } = require('../deals/models');
+    const { Property } = require('../listings/models');
+    const { Project } = require('../projects/models');
+    const city = new RegExp(`^${String(query.city).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+    const [props, projects] = await Promise.all([Property.find({ 'location.city': city }).distinct('_id'), Project.find({ 'location.city': city }).distinct('_id')]);
+    filter.dealId = { $in: await Deal.find({ $or: [{ propertyId: { $in: props } }, { projectId: { $in: projects } }] }).distinct('_id') };
+  }
   if (query.q) {
     const rx = new RegExp(String(query.q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
     filter.$or = [{ receivableNo: rx }, { dealNo: rx }, { 'invoices.invoiceNo': rx }];

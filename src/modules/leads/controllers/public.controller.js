@@ -7,7 +7,7 @@ const buyer = require('../buyer.service');
 const run = (fn, status = 200) => asyncHandler(async (req, res) => (status === 201 ? res.status(201).json({ success: true, data: await fn(req) }) : ok(res, await fn(req))));
 
 module.exports = {
-  sendGuestOtp: run((req) => capture.sendOtp(req.body)),
+  sendGuestOtp: run((req) => capture.sendOtp(req.body, req)),
   verifyOtpOtptoken: run((req) => capture.verifyOtp(req.body)),
   createOrMergeLead: run((req) => capture.enquiry(req.body, req), 201),
   contactFormLead: run((req) => capture.contactForm(req.body, req), 201),

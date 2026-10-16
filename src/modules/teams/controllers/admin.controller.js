@@ -38,6 +38,7 @@ Object.assign(module.exports, {
   create2: asyncHandler(async (req, res) => created(res, await staff.create(v.staffCreate.parse(req.body), req))), // POST /api/admin/staff
   edit2: asyncHandler(async (req, res) => ok(res, await staff.edit(req.params.id, v.staffEdit.parse(req.body), req))), // PATCH /api/admin/staff/:id
   disableWithReassignment: asyncHandler(async (req, res) => ok(res, await staff.disable(req.params.id, v.staffDisable.parse(req.body), req))), // POST /api/admin/staff/:id/disable
+  enableStaff: asyncHandler(async (req, res) => ok(res, await staff.enable(req.params.id, req))), // POST /api/admin/staff/:id/enable
   reset2fa: asyncHandler(async (req, res) => ok(res, await staff.reset2fa(req.params.id, req))), // POST /api/admin/staff/:id/reset-2fa
   revokeSessions: asyncHandler(async (req, res) => ok(res, await staff.forceLogout(req.params.id, req))), // POST /api/admin/staff/:id/force-logout
 });

@@ -13,4 +13,6 @@ const teamsSvc = require('../service');
 
 Object.assign(module.exports, {
   availabilityLeave: asyncHandler(async (req, res) => ok(res, await teamsSvc.setOwnAvailability(req.user, req.body, req))),
+  // GET /api/agent/availability - null when the agent is not in a team yet
+  myAvailability: asyncHandler(async (req, res) => ok(res, await teamsSvc.myTeam(req.user))),
 });

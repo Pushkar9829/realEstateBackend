@@ -53,12 +53,72 @@ function assertFresh(p, req) {
 
 // ---------------------------------------------------------------- create / read
 
-async function createDraft(user, req) {
+async function createDraft(user, req, { link = true } = {}) {
   if (['rejected', 'banned'].includes(user.kyc && user.kyc.status)) throw ApiError.forbidden('Your verification was not approved, you cannot post listings', 'KYC_REJECTED');
+  // RE-G-07: a builder may start a unit listing linked to one of their live projects.
+  const body = (link && req.body) || {};
+  const linkData = body.projectId ? v.projectLink.parse(body) : null;
   const listingNo = await counters.listingNo();
-  const p = await Property.create({ listingNo, listerId: user._id, purpose: 'sale', category: 'residential', type: 'apartment', status: 'draft', wizard: { stepsDone: [], completeness: 0 } });
-  await audit(req, { action: 'listing.create', entityType: 'Property', entityId: p._id });
+  const p = new Property({ listingNo, listerId: user._id, purpose: 'sale', category: 'residential', type: 'apartment', status: 'draft', wizard: { stepsDone: [], completeness: 0 } });
+  if (linkData) await linkProject(p, user, linkData.projectId, linkData.unitConfigId);
+  await p.save();
+  await audit(req, { action: 'listing.create', entityType: 'Property', entityId: p._id, after: linkData ? { projectId: linkData.projectId } : undefined });
   return p;
+}
+
+// ---------------------------------------------------------------- linked unit listings (RE-G-07)
+
+async function liveOwnProject(user, projectId) {
+  if (user.listerType !== 'builder') throw ApiError.validation([{ in: 'body', path: 'projectId', message: 'Only builders can link a listing to a project' }]);
+  const { Project } = require('../projects/models');
+  const proj = await Project.findOne({ _id: projectId, builderId: user._id });
+  if (!proj) throw ApiError.validation([{ in: 'body', path: 'projectId', message: 'Project not found among your projects' }]);
+  if (proj.status !== 'live') throw ApiError.validation([{ in: 'body', path: 'projectId', message: 'Only live projects can have unit listings' }]);
+  return proj;
+}
+
+// Location, amenities and RERA come from the project and are locked on the listing.
+function inheritFromProject(p, proj) {
+  const loc = proj.location ? (proj.location.toObject ? proj.location.toObject() : proj.location) : {};
+  const own = p.location || {};
+  p.location = {
+    cityId: loc.cityId, city: loc.city, localityId: loc.localityId, locality: loc.locality, societyName: proj.name,
+    addressLine: loc.addressLine, unitNo: own.unitNo, pincode: loc.pincode, landmarks: loc.landmarks || [], geo: loc.geo, publicGeo: loc.publicGeo,
+  };
+  p.amenities = [...(proj.amenities || [])];
+  const r = proj.rera || {};
+  const regs = r.registrations || [];
+  p.rera = r.exempt && r.exempt.reason
+    ? { numbers: [], exempt: { reason: r.exempt.reason, docFileId: r.exempt.docFileId, approvedBy: r.exempt.approvedBy, approvedAt: r.exempt.approvedAt }, inheritedFromProject: true }
+    : { numbers: regs.map((x) => x.number), state: regs[0] && regs[0].state, url: regs[0] && regs[0].url, certificateFileId: regs[0] && regs[0].certificateFileId, inheritedFromProject: true };
+  p.wizard.stepsDone = [...new Set([...(p.wizard.stepsDone || []), 2, 5])].sort();
+  p.wizard.completeness = completeness(p);
+}
+
+async function linkProject(p, user, projectId, unitConfigId) {
+  const proj = await liveOwnProject(user, projectId);
+  const conf = proj.configurations.id(unitConfigId);
+  if (!conf) throw ApiError.validation([{ in: 'body', path: 'unitConfigId', message: 'Choose a configuration of this project' }]);
+  p.projectId = proj._id;
+  p.unitConfigId = conf._id;
+  inheritFromProject(p, proj);
+  return { project: proj, config: conf };
+}
+
+function unlinkProject(p) {
+  p.projectId = undefined;
+  p.unitConfigId = undefined;
+  if (p.rera) p.rera.inheritedFromProject = false;
+}
+
+// Short project summary shown on the lister's listing ("Part of <project>").
+async function projectSummary(p) {
+  if (!p.projectId) return null;
+  const { Project } = require('../projects/models');
+  const proj = await Project.findById(p.projectId).select('projectNo name slug status configurations').lean();
+  if (!proj) return null;
+  const conf = (proj.configurations || []).find((c) => String(c._id) === String(p.unitConfigId));
+  return { _id: proj._id, projectNo: proj.projectNo, name: proj.name, slug: proj.slug, status: proj.status, config: conf ? { _id: conf._id, name: conf.name, bhk: conf.bhk } : null };
 }
 
 function listOwn(user, query) {
@@ -71,7 +131,7 @@ async function getOwn(user, id) {
   const p = await ownListing(user, id);
   const out = p.toObject();
   const openCheck = await ListingCheck.findOne({ propertyId: p._id, answer: 'none', dueBy: { $gt: new Date() } }).select('trigger dueBy sentAt').lean();
-  return { ...out, openCheck };
+  return { ...out, openCheck, project: await projectSummary(p) };
 }
 
 // ---------------------------------------------------------------- wizard steps
@@ -83,7 +143,14 @@ async function masterOr422(type, code, path, extra = {}) {
 }
 
 async function applyStep(p, step, d, lister, warnings) {
+  if (step === 2 && p.projectId) {
+    // Linked unit listing: only the private unit number is the lister's own.
+    p.location = { ...(p.location ? p.location.toObject() : {}), unitNo: d.unitNo };
+    return;
+  }
   if (step === 1) {
+    if (d.projectId) await linkProject(p, lister, d.projectId, d.unitConfigId);
+    else if (d.projectId === null && p.projectId) unlinkProject(p);
     const t = await masterOr422('property_type', d.type, 'type');
     if (t.meta && t.meta.category && t.meta.category !== d.category) throw ApiError.validation([{ in: 'body', path: 'type', message: `${t.name} is a ${t.meta.category} type` }]);
     Object.assign(p, { purpose: d.purpose, category: d.category, type: d.type, title: d.title, description: d.description, slug: `${slugify(d.title)}-${p.listingNo.toLowerCase()}` });
@@ -147,6 +214,7 @@ async function applyStep(p, step, d, lister, warnings) {
   }
   if (step === 6) {
     if (d.video !== undefined) p.media.video = d.video ? { kind: 'youtube', url: d.video.url } : undefined;
+    if (d.rera && p.projectId) throw ApiError.conflict('RERA details come from the linked project', 'INHERITED_FROM_PROJECT');
     if (d.rera) {
       if (lister.listerType !== 'builder') throw ApiError.validation([{ in: 'body', path: 'rera', message: 'RERA details apply to builder listings' }]);
       await validateRera(d.rera, lister, warnings);
@@ -176,8 +244,10 @@ function completeness(p) {
 async function saveStep(user, id, stepRaw, body, req) {
   const step = Number(stepRaw);
   if (!v.steps[step]) throw ApiError.badRequest('Step must be 1-6 (commission and submit have their own endpoints)', 'INVALID_STEP');
-  const data = v.steps[step].parse(body);
   const p = await ownListing(user, id);
+  // RE-G-07: a linked unit listing inherits location (except the unit number) and amenities.
+  if (p.projectId && step === 5) throw ApiError.conflict('Amenities come from the linked project', 'INHERITED_FROM_PROJECT');
+  const data = (p.projectId && step === 2 ? v.linkedLocation : v.steps[step]).parse(body);
   assertFresh(p, req);
   if (step === 1) await guard.assertNoContactInfo({ title: data.title, description: data.description }, req);
   if (step === 2 && data.societyName) await guard.assertNoContactInfo({ societyName: data.societyName }, req);
@@ -303,6 +373,13 @@ async function acceptCommission(user, id, body, req) {
   if (![...EDITABLE, ...REVISABLE].includes(p.status)) throw ApiError.conflict(`A ${p.status} listing cannot be edited`, 'LISTING_LOCKED');
   if (!p.wizard.stepsDone.includes(1)) throw ApiError.conflict('Complete the basic details first', 'STEP_ORDER');
   const lister = await User.findById(user._id);
+  if (p.projectId) {
+    const { Project } = require('../projects/models');
+    const proj = await Project.findById(p.projectId).select('commission').lean();
+    if (proj && proj.commission && proj.commission.percent && percent < proj.commission.percent) {
+      throw ApiError.validation([{ in: 'body', path: 'percent', message: `A unit listing may only raise the project commission (${proj.commission.percent}%)` }]);
+    }
+  }
   const revision = REVISABLE.includes(p.status);
   const ag = await agreements.accept({ target: { kind: 'property', doc: p, purpose: p.purpose, ref: `${p.listingNo} - ${p.title}` }, percent, typedName, lister, req, pending: revision });
   if (revision) {
@@ -373,6 +450,7 @@ async function submit(user, id, req) {
     return { status: p.status, revision: 'submitted' };
   }
   if (!['draft', 'changes_requested'].includes(p.status)) throw ApiError.conflict(`A ${p.status} listing cannot be submitted`, 'INVALID_TRANSITION');
+  if (p.projectId) inheritFromProject(p, await liveOwnProject(lister, p.projectId)); // latest project location / RERA
   const missing = await missingForSubmit(p, lister);
   if (missing.length) throw ApiError.validation(missing.map((m) => ({ in: 'listing', path: m, message: 'Required before submitting' })), `Complete the missing steps: ${missing.join(', ')}`);
   if (p.status === 'changes_requested') {
@@ -459,8 +537,8 @@ async function reactivate(user, id, req) {
 
 async function duplicate(user, id, req) {
   const src = await ownListing(user, id);
-  const copy = await createDraft(user, req);
-  ['purpose', 'category', 'type', 'description', 'details', 'amenities'].forEach((k) => { copy[k] = src[k]; });
+  const copy = await createDraft(user, req, { link: false });
+  ['purpose', 'category', 'type', 'description', 'details', 'amenities', 'projectId', 'unitConfigId', 'rera'].forEach((k) => { copy[k] = src[k]; });
   copy.title = src.title ? `${src.title} (copy)`.slice(0, 100) : undefined;
   copy.location = src.location ? { ...src.location.toObject(), unitNo: undefined } : undefined;
   copy.wizard = { stepsDone: (src.wizard.stepsDone || []).filter((s) => [1, 2, 3, 5].includes(s)), completeness: 0 };
@@ -715,5 +793,5 @@ module.exports = {
   createDraft, listOwn, getOwn, saveStep, addMedia, editMedia, orderMedia, removeMedia, currentTemplate, acceptCommission,
   submit, withdraw, renew, deactivate, reactivate, duplicate, softDelete, pause, resume, resumeListing, answerInPanel,
   checkSummary, answerByToken, soldElsewhere, listSoldElsewhere, decideSoldElsewhere, runFreshness, archiveStaleDrafts,
-  createCheck, publicPoint, setStatus, missingForSubmit, expiryDaysFor, applyStep,
+  createCheck, publicPoint, setStatus, missingForSubmit, expiryDaysFor, applyStep, linkProject, inheritFromProject, projectSummary,
 };

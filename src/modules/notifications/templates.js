@@ -19,7 +19,7 @@ module.exports = {
   'auth.password_changed': {
     category: 'account', transactional: true,
     email: { subject: 'Your {{siteName}} password was changed', body: 'Your password was changed on {{time}}. Other sessions were signed out. If this was not you, contact support immediately.' },
-    in_app: { title: 'Password changed', body: 'Your password was changed on {{time}}', link: '/account/security' },
+    in_app: { title: 'Password changed', body: 'Your password was changed on {{time}}', link: '/account?tab=security' },
   },
   'auth.2fa_changed': {
     category: 'account', transactional: true,
@@ -40,7 +40,7 @@ module.exports = {
   'privacy.export_ready': {
     category: 'account', transactional: true,
     email: { subject: 'Your {{siteName}} data download is ready', body: 'Your data export is ready and can be downloaded from your account for 24 hours.' },
-    in_app: { title: 'Your data download is ready', body: 'Available for 24 hours', link: '/account/privacy' },
+    in_app: { title: 'Your data download is ready', body: 'Available for 24 hours', link: '/account?tab=privacy' },
   },
   'privacy.deletion_received': {
     category: 'account', transactional: true,
@@ -74,7 +74,7 @@ module.exports = {
   'broker.flag_raised': {
     category: 'account', transactional: true,
     email: { subject: 'Broker flag {{flagNo}}: rule {{rule}}', body: 'Lister {{listerName}} matched rule {{rule}}. Review the flag in the admin panel.' },
-    in_app: { title: 'Broker flag {{flagNo}}', body: '{{listerName}} matched rule {{rule}}', link: '/admin/trust/broker-flags/{{flagId}}' },
+    in_app: { title: 'Broker flag {{flagNo}}', body: '{{listerName}} matched rule {{rule}}', link: '/admin/trust' },
   },
   'broker.warning': { category: 'account', transactional: true, email: { subject: 'Policy warning from {{siteName}}', body: 'Our review found activity that does not match our no-broker policy: {{note}}. Repeated issues lead to suspension.' } },
   'lister.suspended': {
@@ -89,7 +89,7 @@ module.exports = {
     email: { subject: 'Listing {{listingNo}} submitted', body: 'Your listing {{listingNo}} was submitted and will be reviewed within {{slaHours}} hours.' },
     in_app: { title: 'Listing submitted', body: '{{listingNo}} is under review', link: '/lister/listings/{{propertyId}}' },
   },
-  'listing.review_queued': { category: 'listings', transactional: true, in_app: { title: 'New listing to review', body: '{{listingNo}} {{title}}', link: '/admin/listings/{{propertyId}}' } },
+  'listing.review_queued': { category: 'listings', transactional: true, in_app: { title: 'New listing to review', body: '{{listingNo}} {{title}}', link: '/admin/approvals/{{propertyId}}' } },
   'listing.approved': {
     category: 'listings', transactional: true,
     email: { subject: 'Your listing {{listingNo}} is live', body: 'Good news! {{title}} is now live until {{expiresAt}}.' },
@@ -111,6 +111,10 @@ module.exports = {
     email: { subject: 'Is {{listingNo}} still available?', body: 'Please confirm {{title}} is still available. Answer here: {{link}} (Yes / Sold elsewhere / Pause). Reply by {{dueBy}}.' },
     sms: { body: '{{siteName}}: is {{listingNo}} still available? Reply by {{dueBy}}: {{link}}' },
     in_app: { title: 'Is {{listingNo}} still available?', body: 'Reply by {{dueBy}} or it will be paused', link: '/lister/listings/{{propertyId}}' },
+    whatsapp: {
+      body: 'Is your listing {{listingNo}} ({{title}}) still available? Tap a reply by {{dueBy}} or it will be paused.', name: 'listing_availability_check', params: ['listingNo', 'title', 'dueBy'],
+      buttons: [{ title: 'Yes, available', payload: 'check:{{checkToken}}:available' }, { title: 'Sold elsewhere', payload: 'check:{{checkToken}}:sold' }, { title: 'Pause', payload: 'check:{{checkToken}}:pause' }],
+    },
   },
   'listing.availability_reminder': {
     category: 'listings', transactional: true,
@@ -128,7 +132,7 @@ module.exports = {
   'listing.sold_outside': {
     category: 'listings', transactional: true,
     email: { subject: 'Sold elsewhere: {{listingNo}} ({{checkNo}})', body: 'The lister reported {{listingNo}} as sold or rented outside the platform on {{saleDate}}. Priority: {{priority}}.' },
-    in_app: { title: 'Sold elsewhere {{checkNo}}', body: '{{listingNo}} - priority: {{priority}}', link: '/admin/finance/sold-elsewhere/{{checkId}}' },
+    in_app: { title: 'Sold elsewhere {{checkNo}}', body: '{{listingNo}} - priority: {{priority}}', link: '/admin/receivables' },
   },
   'agreement.accepted': { category: 'listings', transactional: true, email: { subject: 'Your commission agreement {{agreementNo}}', body: 'You accepted {{commissionPercent}}% for {{propertyRef}} on {{acceptedAt}}. A copy is in your panel under Agreements.' } },
   'agreement.countersigned': { category: 'listings', transactional: true, email: { subject: 'Signed agreement {{agreementNo}} available', body: 'The countersigned copy of {{agreementNo}} is available in your panel.' }, in_app: { title: 'Signed agreement available', body: '{{agreementNo}}', link: '/lister/agreements/{{agreementId}}' } },
@@ -142,3 +146,5 @@ module.exports = {
 // Portal, lead, visit and offer events (phases 3-4).
 Object.assign(module.exports, require('./templates.portal'));
 Object.assign(module.exports, require('./templates.finance'));
+Object.assign(module.exports, require('./templates.supply'));
+Object.assign(module.exports, require('./templates.account'));

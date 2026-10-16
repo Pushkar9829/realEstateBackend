@@ -124,7 +124,7 @@ describe('[L][admin] RE-L-05/06/07 Pages, banners, FAQs, testimonials, home', ()
     const res = await request(app).get('/api/sitemap.xml');
     expect(res.headers['content-type']).toMatch(/xml/);
     expect(res.text).toMatch(/\/p\/no-broker-policy/);
-    expect(res.text).toMatch(/property-in-pune\/wakad/);
+    expect(res.text).toMatch(/\/city\/pune\/wakad/);
   });
 });
 

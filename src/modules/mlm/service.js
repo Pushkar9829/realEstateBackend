@@ -3,7 +3,8 @@
 // is deliberately no API that emits an event by hand.
 const crypto = require('crypto');
 const { z } = require('zod');
-const { Outbox } = require('../../core/outbox');
+const outbox = require('../../core/outbox');
+const { Outbox } = outbox;
 const { Job } = require('../../core/jobs');
 const { User } = require('../auth/models');
 const env = require('../../config/env');
@@ -90,6 +91,27 @@ async function myReferral(user) {
   }
   const link = `${env.CLIENT_URL.replace(/\/$/, '')}/?ref=${u.referralCode}`;
   return { code: u.referralCode, shareLink: link, referredBy: u.referredBy || null };
+}
+
+// ---------------------------------------------------------------- user.signup (RE-N-07, Could)
+
+// On events.USER_REGISTERED (account activated). Written only when the
+// mlm.events setting lists user.signup; once per user. The payload carries
+// opaque refs and the referral code only: no name, phone, email or address.
+async function recordSignup({ userId }) {
+  const settings = require('../../core/settings');
+  if (!((await settings.get('mlm.events')) || []).includes('user.signup')) return null;
+  if (await Outbox.exists({ type: 'user.signup', aggregateId: userId })) return null;
+  const u = await User.findById(userId).select('role listerType referredBy referralCapturedAt createdAt').lean();
+  if (!u) return null;
+  return outbox.record('user.signup', {
+    userRef: `u_${u._id}`,
+    role: u.role,
+    listerType: u.listerType || null,
+    referralCode: u.referredBy || null,
+    referralCapturedAt: u.referralCapturedAt ? new Date(u.referralCapturedAt).toISOString() : null,
+    signedUpAt: new Date(u.createdAt).toISOString(),
+  }, { aggregateId: u._id });
 }
 
 // ---------------------------------------------------------------- integration status cards (RE-S-ADM-30)
@@ -193,4 +215,4 @@ async function integrationsStatus() {
   return { checkedAt: new Date(), channels: channels.map((c) => ({ ...c, status: health(c) })) };
 }
 
-module.exports = { listEvents, counts, event, retry, markDead, listJobs, retryJob, myReferral, integrationsStatus };
+module.exports = { listEvents, counts, event, retry, markDead, listJobs, retryJob, myReferral, recordSignup, integrationsStatus };

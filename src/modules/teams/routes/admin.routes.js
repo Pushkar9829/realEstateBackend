@@ -19,6 +19,7 @@ router.get('/staff', ...g.can('staff.manage'), c.list2); // admin (staff.manage)
 router.post('/staff', ...g.can('staff.manage'), c.create2); // admin (staff.manage): Create
 router.patch('/staff/:id', ...g.can('staff.manage'), c.edit2); // admin (staff.manage): Edit
 router.post('/staff/:id/disable', ...g.can('staff.manage'), c.disableWithReassignment); // admin (staff.manage): Disable with reassignment
+router.post('/staff/:id/enable', ...g.can('staff.manage'), c.enableStaff); // admin (staff.manage): Re-enable (RE-S-ADM-16 status active | disabled)
 router.post('/staff/:id/reset-2fa', ...g.can('staff.manage'), c.reset2fa); // admin (staff.manage): Reset 2FA
 router.post('/staff/:id/force-logout', ...g.can('staff.manage'), c.revokeSessions); // admin (staff.manage): Revoke sessions
 

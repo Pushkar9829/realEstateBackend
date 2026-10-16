@@ -43,6 +43,9 @@ module.exports = {
   // RE-M-10 data rights
   requestDeletion: handle(v.deletionRequest, (b, req) => account.requestDeletion(req.user, b, req), 201), // POST /api/me/deletion-request
   consentLedger: handle(null, (b, req) => account.consents(req.user)), // GET /api/me/consents
+  giveAConsent: handle(null, (b, req) => account.giveConsent(req.user, z.object({ purpose: z.enum(PURPOSES), source: z.enum(['banner', 'registration', 'whatsapp', 'enquiry', 'agent']).default('banner') }).parse(req.body || {}), req), 201), // POST /api/me/consents
   withdrawAConsent: handle(null, (b, req) => account.withdrawConsent(req.user, z.enum(PURPOSES).parse(req.params.purpose), req)), // POST /api/me/consents/:purpose/withdraw
   prepareMyDataDownload: handle(null, (b, req) => account.requestDataExport(req.user, req), 201), // POST /api/me/data-export
+  myDataDownload: handle(null, (b, req) => account.latestDataExport(req.user, req)), // GET /api/me/data-export (status + link)
+  myDeletionRequest: handle(null, (b, req) => account.myDeletionRequest(req.user)), // GET /api/me/deletion-request
 };

@@ -8,7 +8,7 @@ const counters = require('../../core/counters');
 const settings = require('../../core/settings');
 const { ApiError, paginate } = require('../../core/http');
 const { audit } = require('../../core/audit');
-const { notifyPermission } = require('../notifications/service');
+const { notifyPermission, notifyUser } = require('../notifications/service');
 
 const phoneHash = (phone) => crypto.createHash('sha256').update(`phone:${String(phone).trim().toLowerCase()}`).digest('hex');
 const mask = (phone) => `${String(phone).slice(0, 3)}******${String(phone).slice(-2)}`;
@@ -42,7 +42,24 @@ async function evaluate(phone) {
   });
   if (action === 'block') await Blocklist.updateOne({ type: 'seeker_phone', valueHash: h }, { $setOnInsert: { type: 'seeker_phone', valueHash: h, reason: `Seeker flag ${flag.flagNo}` } }, { upsert: true });
   await notifyPermission('users.manage', 'seeker.flagged', { flagNo: flag.flagNo, listers: listers.size, localities: localities.size });
+  // Step 4: existing leads stay with their agents, who are told to qualify carefully.
+  await Lead.updateMany({ _id: { $in: flag.leadIds } }, { $set: { seekerFlagId: flag._id } });
+  await notifyFlaggedLeads(flag, await Lead.find({ _id: { $in: flag.leadIds } }).select('leadNo assignedTo stage').lean());
   return flag;
+}
+
+// Open / actioned flag on a phone, or null.
+const activeFlag = (phone) => SeekerFlag.findOne({ phoneHash: phoneHash(phone), status: { $in: ['open', 'actioned'] } }).sort({ createdAt: -1 }).lean();
+
+// seeker.flagged_lead to the assigned agent of each open lead (RE-F-10).
+async function notifyFlaggedLeads(flag, leads) {
+  const { User } = require('../auth/models');
+  const { OPEN_STAGES } = require('../leads/common');
+  for (const l of leads) {
+    if (!l.assignedTo || (l.stage && !OPEN_STAGES.includes(l.stage))) continue;
+    const agent = await User.findById(l.assignedTo);
+    if (agent) await notifyUser({ user: agent, event: 'seeker.flagged_lead', vars: { leadNo: l.leadNo, leadId: String(l._id), flagNo: flag.flagNo } });
+  }
 }
 
 function list(query) {
@@ -107,4 +124,4 @@ async function manualFlag(user, leadId, body, req) {
   return { flagNo: flag.flagNo, status: flag.status, rule: flag.rule };
 }
 
-module.exports = { restriction, evaluate, list, detail, decide, phoneHash, manualFlag };
+module.exports = { restriction, evaluate, activeFlag, notifyFlaggedLeads, list, detail, decide, phoneHash, manualFlag };

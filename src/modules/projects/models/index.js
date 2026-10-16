@@ -47,6 +47,8 @@ const projectSchema = new mongoose.Schema({
   rejectionReason: String,
   statusHistory: [{ _id: false, from: String, to: String, actor: ObjectId, at: { type: Date, default: Date.now }, note: String }],
   featured: { on: Boolean, until: Date },
+  // RE-G-08 step 5: set by the daily RERA job when a registration's validTill is near (30 days) or past.
+  reraExpiry: { status: { type: String, enum: ['ok', 'expiring', 'expired'] }, number: String, validTill: Date, flaggedAt: Date },
   liveAt: Date,
 }, { timestamps: true });
 projectSchema.index({ 'location.publicGeo': '2dsphere' });

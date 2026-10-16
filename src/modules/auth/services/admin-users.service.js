@@ -56,8 +56,9 @@ async function anonymise(id, body, req) {
   const { reason } = z.object({ reason: z.string().trim().min(5).max(500) }).parse(body || {});
   const u = await User.findById(id);
   if (!u) throw ApiError.notFound('User not found');
-  if (u.role !== 'buyer') throw ApiError.forbidden('Only buyer accounts can be anonymised here', 'NOT_A_BUYER');
+  if (!['buyer', 'lister'].includes(u.role)) throw ApiError.forbidden('Only buyer and lister accounts can be anonymised here', 'NOT_ANONYMISABLE');
   if (u.status === 'anonymised') throw ApiError.conflict('Already anonymised', 'ANONYMISED');
+  if (u.role === 'lister') return anonymiseLister(u, reason, req);
   const { Lead, BuyerContact } = require('../../leads/models');
   const { Deal } = require('../../deals/models');
   const leadIds = (await Lead.find({ 'buyer.userId': u._id }).select('_id').lean()).map((l) => l._id);
@@ -73,6 +74,30 @@ async function anonymise(id, body, req) {
   await DeletionRequest.updateMany({ userId: u._id, status: { $in: ['requested', 'in_progress'] } }, { $set: { status: 'completed', processedBy: req.user._id, processedAt: new Date(), note: reason } });
   await audit(req, { action: 'user.anonymise', entityType: 'User', entityId: u._id, reason, after: { leads: leadIds.length } });
   return { _id: u._id, status: u.status, leads: leadIds.length };
+}
+
+// Listers (RE-M-10): only once nothing is active. Deals, invoices and agreements are
+// kept for retention.dealYears; invoices carry their own billing snapshot, so the
+// profile can be cleared without changing any issued document.
+async function anonymiseLister(u, reason, req) {
+  const { Property } = require('../../listings/models');
+  const { Project } = require('../../projects/models');
+  const { Deal } = require('../../deals/models');
+  const { Receivable } = require('../../receivables/models');
+  const blockers = [];
+  if (await Property.exists({ listerId: u._id, deletedAt: null, status: { $in: ['live', 'paused', 'pending_approval', 'changes_requested'] } })) blockers.push('active listings');
+  if (await Project.exists({ builderId: u._id, status: { $in: ['live', 'pending_approval', 'changes_requested'] } })) blockers.push('active projects');
+  if (await Deal.exists({ listerId: u._id, status: { $in: ['draft', 'submitted', 'under_review', 'returned'] } })) blockers.push('open deals');
+  if (await Receivable.exists({ listerId: u._id, status: { $in: ['pending_invoice', 'invoiced', 'overdue', 'partially_paid', 'disputed'] } })) blockers.push('unpaid commission');
+  if (blockers.length) throw ApiError.conflict(`Close these first: ${blockers.join(', ')}`, 'LISTER_HAS_ACTIVE_RECORDS', { blockers });
+  const tag = String(u._id);
+  const drafts = await Property.updateMany({ listerId: u._id, status: 'draft', deletedAt: null }, { $set: { deletedAt: new Date() } });
+  Object.assign(u, { name: 'Anonymised lister', email: `anon-${tag}@deleted.invalid`, phone: `anon:${tag}`, status: 'anonymised', anonymisedAt: new Date(), billing: undefined, address: undefined });
+  await u.save();
+  await RefreshToken.updateMany({ userId: u._id, revokedAt: null }, { $set: { revokedAt: new Date() } });
+  await DeletionRequest.updateMany({ userId: u._id, status: { $in: ['requested', 'in_progress'] } }, { $set: { status: 'completed', processedBy: req.user._id, processedAt: new Date(), note: reason } });
+  await audit(req, { action: 'user.anonymise', entityType: 'User', entityId: u._id, reason, after: { role: 'lister', draftsRemoved: drafts.modifiedCount } });
+  return { _id: u._id, status: u.status, draftsRemoved: drafts.modifiedCount };
 }
 
 const decisionSchema = z.object({ status: z.enum(['in_progress', 'completed', 'rejected']), note: z.string().trim().min(5).max(1000) });

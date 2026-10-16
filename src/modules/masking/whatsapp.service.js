@@ -26,10 +26,24 @@ async function firstTime(messageId) {
   return doc.seq === 1;
 }
 
+async function optOut(phone, req) {
+  const { Consent, User } = require('../auth/models');
+  const { Lead, BuyerContact } = require('../leads/models');
+  const [user, contact] = await Promise.all([User.findOne({ phone }).select('_id'), BuyerContact.findOne({ phone }).select('_id')]);
+  const subjects = [user && user._id, contact && contact._id].filter(Boolean);
+  const r = subjects.length ? await Consent.updateMany({ subjectId: { $in: subjects }, purpose: 'whatsapp_updates', withdrawnAt: null }, { $set: { withdrawnAt: new Date() } }) : { modifiedCount: 0 };
+  await Lead.updateMany({ 'buyer.phone': phone, whatsappOptIn: true }, { $set: { whatsappOptIn: false } });
+  const { audit } = require('../../core/audit');
+  await audit(req, { action: 'consent.withdraw', entityType: 'User', entityId: user ? user._id : undefined, after: { purpose: 'whatsapp_updates', via: 'whatsapp_stop', consents: r.modifiedCount } });
+  return { kind: 'text', result: 'opted_out' };
+}
+
 async function onText(msg, contact, req) {
   const { Property } = require('../listings/models');
   const capture = require('../leads/capture.service');
   const text = (msg.text && msg.text.body) || '';
+  // "STOP" / "UNSUBSCRIBE" opts the sender out of WhatsApp updates (RE-K-08, RE-M-10).
+  if (/^\s*(stop|unsubscribe|band karo|बंद करो)\s*$/i.test(text)) return optOut(`+${String(msg.from).replace(/\D/g, '')}`, req);
   const m = text.match(LISTING_RX);
   if (!m) return { kind: 'text', result: 'no_listing' }; // answered by the sales team in the WhatsApp inbox
   const p = await Property.findOne({ listingNo: m[1].toUpperCase(), status: 'live', deletedAt: null }).select('_id');

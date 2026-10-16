@@ -10,7 +10,7 @@ const BADGE_LABEL = { owner: 'Verified Owner', landlord: 'Verified Landlord', bu
 function listerBadge(lister) {
   if (!lister) return 'Verified Lister';
   const base = BADGE_LABEL[lister.listerType] || 'Verified Lister';
-  return lister.listerType === 'builder' && lister.brand && lister.brand.approved && lister.brand.name ? `${base} ${lister.brand.name}` : base;
+  return lister.listerType === 'builder' && lister.brand && lister.brand.approved && lister.brand.name ? `${base} · ${lister.brand.name}` : base; // RE-B-02: "Verified Builder · <brand>" once approved
 }
 
 // RE-B-13: badges computed from listing and lister data, each with a tooltip that never names anyone.

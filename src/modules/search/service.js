@@ -678,6 +678,24 @@ async function listReports(query) {
   return { items, meta: { page, limit, total, pages: Math.ceil(total / limit) } };
 }
 
+// report.sla_warning (spec section 5): open reports in the amber band (75% of
+// reports.reviewSlaHours, or older) are sent once to admins with properties.manage
+// as one digest. Scheduled by the reports module (src/modules/reports/index.js).
+async function reportSlaWarning(now = new Date()) {
+  const sla = await settings.get('reports.reviewSlaHours');
+  const rows = await ListingReport.find({ status: { $in: ['open', 'under_review'] }, createdAt: { $lte: new Date(now.getTime() - 0.75 * sla * 3600000) } })
+    .sort({ createdAt: 1 }).limit(200).populate('propertyId', 'listingNo').lean();
+  const fresh = [];
+  for (const r of rows) {
+    const mark = await counters.Counter.findOneAndUpdate({ _id: `report_sla:${r._id}` }, { $inc: { seq: 1 } }, { upsert: true, new: true });
+    if (mark.seq === 1) fresh.push(r);
+  }
+  if (!fresh.length) return 0;
+  const list = fresh.slice(0, 20).map((r) => `${r.reportNo} (${(r.propertyId && r.propertyId.listingNo) || '-'})`).join(', ');
+  await notifyPermission('properties.manage', 'report.sla_warning', { count: fresh.length, slaHours: sla, list });
+  return fresh.length;
+}
+
 // Actions: dismiss, ask_fix, pause, take_down, raise_broker_flag. `flag: true`
 // raises a broker flag alongside ask_fix / pause / take_down (RE-F-06); the
 // flag goes through the kyc broker-flag service with the report as evidence.
@@ -709,5 +727,5 @@ module.exports = {
   citySummary, localitySummary, localitiesIndex, trends, computeTrends, parseSentence,
   shortlist, addShortlist, removeShortlist, notifyShortlisters, onPriceChange,
   listSaved, createSaved, editSaved, deleteSaved, unsubscribe, unsubscribeToken, alertInstant, alertDigest,
-  reportListing, listReports, actionReport, liveBySlugOrId, cards,
+  reportListing, listReports, reportSlaWarning, actionReport, liveBySlugOrId, cards,
 };

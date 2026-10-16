@@ -2,6 +2,9 @@
 // rate limits, seeker rules, duplicate merge within 7 days, lead creation,
 // routing and acknowledgements. Lister data never reaches the buyer and buyer
 // data never reaches the lister ("Buyer N").
+// RE-F-10 acceptance 7: a blocked seeker and a rate-limited enquiry get the same
+// answer (429 RATE_LIMITED, hotline message); the real reason is only in the
+// log and the audit trail (action lead.enquiry_refused).
 const { z } = require('zod');
 const { Lead, BuyerContact, SiteVisit } = require('./models');
 const { Property } = require('../listings/models');
@@ -12,7 +15,9 @@ const jwt = require('../../core/security/jwt');
 const counters = require('../../core/counters');
 const settings = require('../../core/settings');
 const { ApiError } = require('../../core/http');
-const { notifyUser, sendNow } = require('../notifications/service');
+const { audit } = require('../../core/audit');
+const logger = require('../../core/logger');
+const { notifyUser, notifyLeadBuyer } = require('../notifications/service');
 const common = require('./common');
 const slots = require('./slots.service');
 const seeker = require('../kyc/seeker.service');
@@ -20,11 +25,23 @@ const seeker = require('../kyc/seeker.service');
 const oid = z.string().regex(/^[a-f0-9]{24}$/);
 const utmSchema = z.object({ source: z.string().max(60).optional(), medium: z.string().max(60).optional(), campaign: z.string().max(80).optional() }).optional();
 
+// ---------------------------------------------------------------- refusals (RE-F-10)
+
+const REFUSED_MESSAGE = 'Too many requests from this number today. Please call our hotline.';
+const maskPhone = (phone) => `${String(phone).slice(0, 3)}******${String(phone).slice(-2)}`;
+
+// One generic error for every refusal; reason: seeker_blocked | phone_limit | phone_limit_throttled | ip_limit.
+async function refused(req, reason, phone, where) {
+  logger.warn({ reason, where, phone: maskPhone(phone) }, 'Enquiry refused');
+  await audit(req, { action: 'lead.enquiry_refused', entityType: 'Lead', reason, after: { reason, where, phone: maskPhone(phone) } }).catch(() => {});
+  return new ApiError(429, 'RATE_LIMITED', REFUSED_MESSAGE);
+}
+
 // ---------------------------------------------------------------- guest OTP
 
-async function sendOtp(body) {
+async function sendOtp(body, req) {
   const { phone, email } = z.object({ phone: authV.phone, email: authV.email.optional() }).parse(body);
-  if ((await seeker.restriction(phone)) === 'blocked') throw ApiError.forbidden('Please call our hotline to enquire', 'SEEKER_BLOCKED');
+  if ((await seeker.restriction(phone)) === 'blocked') throw await refused(req, 'seeker_blocked', phone, 'otp');
   const indian = phone.startsWith('+91');
   if (!indian && !email) throw ApiError.validation([{ in: 'body', path: 'email', message: 'Add your email to receive the code' }]);
   const r = await otpService.issue({ target: phone, channel: indian ? 'sms' : 'email', purpose: 'guest_enquiry', fallbackEmail: email });
@@ -43,18 +60,21 @@ function guestPhone(otpToken) {
 
 // ---------------------------------------------------------------- limits
 
-async function bump(key, limit, windowMs, message) {
+// True when this request goes over the limit for the window.
+async function bump(key, limit, windowMs) {
   const { Counter } = require('../../core/counters');
   const bucket = `${key}:${Math.floor(Date.now() / windowMs)}`;
   const doc = await Counter.findOneAndUpdate({ _id: bucket }, { $inc: { seq: 1 } }, { upsert: true, new: true });
-  if (doc.seq > limit) throw new ApiError(429, 'RATE_LIMITED', message);
+  return doc.seq > limit;
 }
 
-async function enforceLimits(phone, ip, restriction) {
+// Blocked phone, per-phone and per-IP limits: all refused with the same generic error.
+async function enforceLimits(phone, ip, restriction, req, where) {
+  if (restriction === 'blocked') throw await refused(req, 'seeker_blocked', phone, where);
   const s = await settings.all();
   const perDay = restriction === 'throttled' ? s['seeker.throttlePerDay'] : s['lead.maxEnquiriesPerPhonePerDay'];
-  await bump(`enq:phone:${phone}`, perDay, 86400000, 'You have sent many enquiries today. Our team will call you, or call the hotline.');
-  if (ip) await bump(`enq:ip:${ip}`, s['lead.maxEnquiriesPerIpPerHour'], 3600000, 'Too many enquiries from this network. Please try again later.');
+  if (await bump(`enq:phone:${phone}`, perDay, 86400000)) throw await refused(req, restriction === 'throttled' ? 'phone_limit_throttled' : 'phone_limit', phone, where);
+  if (ip && await bump(`enq:ip:${ip}`, s['lead.maxEnquiriesPerIpPerHour'], 3600000)) throw await refused(req, 'ip_limit', phone, where);
 }
 
 // ---------------------------------------------------------------- buyer identity
@@ -84,12 +104,18 @@ async function recordConsent(buyer, d, req) {
 
 async function acknowledge(lead, buyer, extra = {}) {
   const vars = { leadNo: lead.leadNo, name: buyer.name || 'there', ...extra };
-  if (buyer.userId) {
-    const u = await User.findById(buyer.userId);
-    if (u) await notifyUser({ user: u, event: 'lead.created', channels: ['in_app', 'email', 'sms'], vars });
-    return;
-  }
-  await sendNow({ channel: buyer.phone.startsWith('+91') ? 'sms' : 'email', to: buyer.phone.startsWith('+91') ? buyer.phone : buyer.email, event: 'lead.created', vars, fallbackEmail: buyer.email }).catch(() => {});
+  // Registered buyer: in-app, email, SMS; guest: SMS now (email for foreign numbers). WhatsApp instead of SMS when opted in (RE-K-08).
+  await notifyLeadBuyer(lead, { event: 'lead.created', channels: ['in_app', 'email', 'sms'], vars, guestChannel: 'auto' });
+}
+
+// seeker.flagged_lead (RE-F-10 step 4): the agent of a new lead from a phone
+// that already carries an open / actioned seeker flag is asked to qualify carefully.
+async function flagNewLead(lead, raised) {
+  if (raised) return; // evaluate() raised the flag just now and told the agents itself
+  const flag = await seeker.activeFlag(lead.buyer.phone);
+  if (!flag) return;
+  await Lead.updateOne({ _id: lead._id }, { $set: { seekerFlagId: flag._id } });
+  await seeker.notifyFlaggedLeads(flag, [lead]);
 }
 
 // ---------------------------------------------------------------- enquiry (C1)
@@ -147,8 +173,7 @@ async function enquiry(body, req, opts = {}) {
   const buyer = await buyerFor(opts.trustedPhone ? null : req.user, opts.trustedPhone ? { ...d, trustedPhone: opts.trustedPhone } : d);
   if (req.user && String(req.user._id) === String(listerId)) throw ApiError.conflict('You cannot enquire on your own listing', 'SELF_ENQUIRY');
   const restriction = await seeker.restriction(buyer.phone);
-  if (restriction === 'blocked') throw ApiError.forbidden('Please call our hotline to enquire', 'SEEKER_BLOCKED');
-  await enforceLimits(buyer.phone, opts.trustedPhone ? null : req.ip, restriction);
+  await enforceLimits(buyer.phone, opts.trustedPhone ? null : req.ip, restriction, req, 'enquiry');
   ctx.source = d.type;
   const s = await settings.all();
 
@@ -195,7 +220,7 @@ async function enquiry(body, req, opts = {}) {
   await acknowledge(lead, buyer, { listingNo: target.listingNo || target.projectNo });
   const lister = await User.findById(listerId);
   if (lister) await notifyUser({ user: lister, event: 'lead.lister_new', vars: { listingNo: target.listingNo || target.projectNo, buyerLabel: lead.buyerLabel } });
-  await seeker.evaluate(buyer.phone);
+  await flagNewLead(lead, await seeker.evaluate(buyer.phone));
   return { leadNo: lead.leadNo, merged: false, visitNo: visit && visit.visitNo };
 }
 
@@ -218,8 +243,7 @@ async function contactForm(body, req) {
   const d = z.object({ name: z.string().trim().min(2).max(80), email: authV.email.optional(), phone: z.string().optional(), otpToken: z.string().optional(), message: z.string().trim().min(5).max(2000), consent: z.literal(true), city: z.string().max(60).optional(), referralCode: z.string().trim().toUpperCase().regex(/^[A-Z0-9]{4,20}$/).optional() }).parse(body);
   const buyer = await buyerFor(req.user, d);
   const restriction = await seeker.restriction(buyer.phone);
-  if (restriction === 'blocked') throw ApiError.forbidden('Please call our hotline', 'SEEKER_BLOCKED');
-  await enforceLimits(buyer.phone, req.ip, restriction);
+  await enforceLimits(buyer.phone, req.ip, restriction, req, 'contact_form');
   const lead = new Lead({ leadNo: await counters.leadNo(), buyer: { contactId: buyer.contact._id, userId: buyer.userId, name: buyer.name, phone: buyer.phone, email: buyer.email }, sources: ['contact_form'], requirement: { city: d.city, notes: d.message }, referralCode: buyer.referralCode, consentAt: new Date(), throttled: restriction === 'throttled' });
   common.entry(lead, 'created', buyer.userId, { type: 'contact_form', message: d.message });
   await common.route(lead, { city: d.city, source: 'contact_form' });
@@ -243,8 +267,7 @@ async function requirement(body, req) {
   const d = requirementSchema.parse(body);
   const buyer = await buyerFor(req.user, d);
   const restriction = await seeker.restriction(buyer.phone);
-  if (restriction === 'blocked') throw ApiError.forbidden('Please call our hotline', 'SEEKER_BLOCKED');
-  await enforceLimits(buyer.phone, req.ip, restriction);
+  await enforceLimits(buyer.phone, req.ip, restriction, req, 'requirement');
   const s = await settings.all();
   const since = new Date(Date.now() - s['lead.dedupeDays'] * 86400000);
   const req2 = { purpose: d.purpose, city: d.city, category: d.category, types: d.types, localities: d.localities, bhk: d.bhk, budgetMin: d.budgetMin, budgetMax: d.budgetMax, timeline: d.timeline, loanNeeded: d.loanNeeded, notes: d.notes };
@@ -270,4 +293,4 @@ async function requirement(body, req) {
   return { leadNo: lead.leadNo, merged, savedSearchId };
 }
 
-module.exports = { sendOtp, verifyOtp, enquiry, contactForm, requirement, requestVisit, buyerFor };
+module.exports = { sendOtp, verifyOtp, enquiry, contactForm, requirement, requestVisit, buyerFor, REFUSED_MESSAGE };

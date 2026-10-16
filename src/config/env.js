@@ -49,6 +49,7 @@ const schema = z.object({
   WHATSAPP_ACCESS_TOKEN: z.string().optional(),
   WHATSAPP_APP_SECRET: z.string().optional(),
   WHATSAPP_VERIFY_TOKEN: z.string().optional(),
+  WHATSAPP_API_VERSION: z.string().regex(/^v\d+\.\d+$/).default('v21.0'), // Meta Graph API version
 
   // Masked calling (Phase 2, Exotel)
   TELEPHONY_PROVIDER: z.enum(['none', 'exotel']).default('none'),

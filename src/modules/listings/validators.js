@@ -25,6 +25,9 @@ const rera = z.object({
   }
 });
 
+// RE-G-07: a builder's unit listing linked to a live project and one configuration.
+const projectLink = z.object({ projectId: oid, unitConfigId: oid });
+
 const steps = {
   1: z.object({
     purpose: z.enum(['sale', 'rent']),
@@ -32,7 +35,9 @@ const steps = {
     type: z.string().trim().min(2).max(40),
     title: z.string().trim().min(10).max(100),
     description: z.string().trim().min(50).max(5000),
-  }),
+    projectId: oid.nullable().optional(), // null unlinks
+    unitConfigId: oid.optional(),
+  }).refine((d) => !d.projectId || d.unitConfigId, { path: ['unitConfigId'], message: 'Choose a configuration of the project' }),
   2: z.object({
     cityId: oid,
     localityId: oid.optional(),
@@ -87,6 +92,9 @@ const steps = {
 module.exports = {
   steps,
   rera,
+  projectLink,
+  // Step 2 of a linked unit listing: location is the project's; only the private unit number is the lister's.
+  linkedLocation: z.object({ unitNo: z.string().trim().max(30).optional() }).passthrough(),
   AREA_UNITS,
   TO_SQFT,
   media: z.object({

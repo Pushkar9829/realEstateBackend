@@ -155,22 +155,66 @@ async function agentsReport(user, r) {
   return { summary: { agents: rows.length, leadsAssigned: sum('leadsAssigned'), dealsVerified: sum('dealsVerified'), conversionPercent: pct(sum('dealsVerified'), sum('leadsAssigned')), commission: sum('commission') }, rows };
 }
 
-// Commission (RE-O-04): earned (verified), invoiced, received by month, plus outstanding and ageing.
-async function commissionReport(user, r) {
+// Commission (RE-O-04, RE-D-08): earned (verified), invoiced and received, plus
+// outstanding and ageing. ?groupBy=month (default) | lister | agent | city;
+// managers see their teams only. City is the listing's (or project's) city.
+const COMMISSION_GROUPS = ['month', 'lister', 'agent', 'city'];
+
+// Stages that add a `_g` group key to deal-shaped documents (Deal, or a
+// Receivable joined to its deal for city).
+function groupStages(groupBy, { viaDeal = false } = {}) {
+  if (groupBy === 'lister') return [{ $addFields: { _g: '$listerId' } }];
+  if (groupBy === 'agent') return [{ $addFields: { _g: '$agentId' } }];
+  return [
+    ...(viaDeal ? [{ $lookup: { from: 'deals', localField: 'dealId', foreignField: '_id', as: '_deal', pipeline: [{ $project: { propertyId: 1, projectId: 1 } }] } }, { $addFields: { _d: { $first: '$_deal' } } }] : [{ $addFields: { _d: { propertyId: '$propertyId', projectId: '$projectId' } } }]),
+    { $lookup: { from: 'properties', localField: '_d.propertyId', foreignField: '_id', as: '_p', pipeline: [{ $project: { 'location.city': 1 } }] } },
+    { $lookup: { from: 'projects', localField: '_d.projectId', foreignField: '_id', as: '_pr', pipeline: [{ $project: { 'location.city': 1 } }] } },
+    { $addFields: { _g: { $ifNull: [{ $first: '$_p.location.city' }, { $ifNull: [{ $first: '$_pr.location.city' }, 'Unknown'] }] } } },
+  ];
+}
+
+async function groupLabels(groupBy, keys) {
+  if (groupBy === 'city') return Object.fromEntries(keys.map((k) => [String(k), String(k)]));
+  const users = await User.find({ _id: { $in: keys.filter(Boolean) } }).select('name billing.name').lean();
+  const names = Object.fromEntries(users.map((u) => [String(u._id), (groupBy === 'lister' && u.billing && u.billing.name) || u.name]));
+  return Object.fromEntries(keys.map((k) => [String(k), names[String(k)] || 'Unknown']));
+}
+
+async function commissionReport(user, r, query = {}) {
+  const groupBy = query.groupBy || 'month';
+  if (!COMMISSION_GROUPS.includes(groupBy)) throw ApiError.validation([{ in: 'query', path: 'groupBy', message: `Use one of: ${COMMISSION_GROUPS.join(', ')}` }]);
   const teams = await teamScope(user);
   const scope = teams ? { teamId: { $in: teams } } : {};
   const month = (field) => ({ $dateToString: { format: '%Y-%m', date: field, timezone: 'Asia/Kolkata' } });
+  const byMonth = groupBy === 'month';
+  const dealKey = (field) => (byMonth ? [{ $addFields: { _g: month(field) } }] : groupStages(groupBy));
+  const recKey = (field) => (byMonth ? [{ $addFields: { _g: month(field) } }] : groupStages(groupBy, { viaDeal: groupBy === 'city' }));
   const [earned, invoiced, received, open] = await Promise.all([
-    Deal.aggregate([{ $match: { ...scope, status: 'verified', 'review.verifiedAt': { $gte: r.from, $lte: r.to } } }, { $group: { _id: month('$review.verifiedAt'), deals: { $sum: 1 }, commission: { $sum: '$commissionAmount' }, gst: { $sum: '$gstAmount' } } }]),
-    Receivable.aggregate([{ $match: scope }, { $unwind: '$invoices' }, { $match: { 'invoices.status': 'issued', 'invoices.date': { $gte: r.from, $lte: r.to } } }, { $group: { _id: month('$invoices.date'), invoiced: { $sum: '$invoices.total' } } }]),
-    Receivable.aggregate([{ $match: scope }, { $unwind: '$payments' }, { $match: { 'payments.status': 'confirmed', 'payments.confirmedAt': { $gte: r.from, $lte: r.to } } }, { $group: { _id: month('$payments.confirmedAt'), received: { $sum: '$payments.amount' }, tds: { $sum: '$payments.tds' } } }]),
-    Receivable.find({ ...scope, status: { $in: [...receivables.OPEN, 'disputed'] } }).select('totalDue receivedAmount tdsAmount writtenOffAmount').lean(),
+    Deal.aggregate([{ $match: { ...scope, status: 'verified', 'review.verifiedAt': { $gte: r.from, $lte: r.to } } }, ...dealKey('$review.verifiedAt'), { $group: { _id: '$_g', deals: { $sum: 1 }, commission: { $sum: '$commissionAmount' }, gst: { $sum: '$gstAmount' } } }]),
+    Receivable.aggregate([{ $match: scope }, { $unwind: '$invoices' }, { $match: { 'invoices.status': 'issued', 'invoices.date': { $gte: r.from, $lte: r.to } } }, ...recKey('$invoices.date'), { $group: { _id: '$_g', invoiced: { $sum: '$invoices.total' } } }]),
+    Receivable.aggregate([{ $match: scope }, { $unwind: '$payments' }, { $match: { 'payments.status': 'confirmed', 'payments.confirmedAt': { $gte: r.from, $lte: r.to } } }, ...recKey('$payments.confirmedAt'), { $group: { _id: '$_g', received: { $sum: '$payments.amount' }, tds: { $sum: '$payments.tds' } } }]),
+    byMonth
+      ? Receivable.find({ ...scope, status: { $in: [...receivables.OPEN, 'disputed'] } }).select('totalDue receivedAmount tdsAmount writtenOffAmount').lean()
+      : Receivable.aggregate([{ $match: { ...scope, status: { $in: [...receivables.OPEN, 'disputed'] } } }, ...recKey(null), { $project: { _g: 1, totalDue: 1, receivedAmount: 1, tdsAmount: 1, writtenOffAmount: 1 } }]),
   ]);
-  const months = [...new Set([...earned, ...invoiced, ...received].map((x) => x._id))].sort();
-  const f = (rows, m, k) => ((rows.find((x) => x._id === m) || {})[k] || 0);
-  const rows = months.map((m) => ({ month: m, deals: f(earned, m, 'deals'), commission: f(earned, m, 'commission'), gst: f(earned, m, 'gst'), invoiced: f(invoiced, m, 'invoiced'), received: f(received, m, 'received'), tds: f(received, m, 'tds') }));
   const outstanding = open.reduce((a, x) => a + receivables.outstanding(x), 0);
-  return { summary: { commission: rows.reduce((a, x) => a + x.commission, 0), invoiced: rows.reduce((a, x) => a + x.invoiced, 0), received: rows.reduce((a, x) => a + x.received, 0), outstanding }, ageing: await receivables.ageing(user), rows };
+  const f = (rows, k, key) => ((rows.find((x) => String(x._id) === k) || {})[key] || 0);
+  const summaryOf = (rows) => ({ commission: rows.reduce((a, x) => a + x.commission, 0), invoiced: rows.reduce((a, x) => a + x.invoiced, 0), received: rows.reduce((a, x) => a + x.received, 0), outstanding });
+  if (byMonth) {
+    const months = [...new Set([...earned, ...invoiced, ...received].map((x) => x._id))].sort();
+    const rows = months.map((m) => ({ month: m, deals: f(earned, m, 'deals'), commission: f(earned, m, 'commission'), gst: f(earned, m, 'gst'), invoiced: f(invoiced, m, 'invoiced'), received: f(received, m, 'received'), tds: f(received, m, 'tds') }));
+    return { groupBy, summary: summaryOf(rows), ageing: await receivables.ageing(user), rows };
+  }
+  const due = open.reduce((a, x) => { const k = String(x._g); a[k] = (a[k] || 0) + receivables.outstanding(x); return a; }, {});
+  const rawKeys = [...new Map([...earned, ...invoiced, ...received, ...open.map((x) => ({ _id: x._g }))].map((x) => [String(x._id), x._id])).values()];
+  const labels = await groupLabels(groupBy, rawKeys);
+  const rows = rawKeys.map((key) => {
+    const k = String(key);
+    const row = { [groupBy]: labels[k] };
+    if (groupBy !== 'city') row[`${groupBy}Id`] = k; // lister / agent id for drill-down
+    return Object.assign(row, { deals: f(earned, k, 'deals'), commission: f(earned, k, 'commission'), gst: f(earned, k, 'gst'), invoiced: f(invoiced, k, 'invoiced'), received: f(received, k, 'received'), tds: f(received, k, 'tds'), outstanding: due[k] || 0 });
+  }).sort((a, b) => b.commission - a.commission || b.outstanding - a.outstanding);
+  return { groupBy, summary: summaryOf(rows), ageing: await receivables.ageing(user), rows };
 }
 
 async function ageingReport(user) {
@@ -179,7 +223,7 @@ async function ageingReport(user) {
 }
 
 const REPORTS = { listings: listingsReport, leads: leadsReport, funnel: funnelReport, sla: slaReport, agents: agentsReport, commission: commissionReport, ageing: ageingReport };
-const MONEY_COLS = new Set(['commission', 'gst', 'invoiced', 'received', 'tds', 'amount']);
+const MONEY_COLS = new Set(['commission', 'gst', 'invoiced', 'received', 'tds', 'amount', 'outstanding']);
 
 async function run(user, key, query) {
   const fn = REPORTS[key];
@@ -192,7 +236,7 @@ async function run(user, key, query) {
 
 function toCsv(rows) {
   if (!rows.length) return '';
-  const cols = Object.keys(rows[0]).filter((k) => k !== 'agentId');
+  const cols = Object.keys(rows[0]).filter((k) => !/Id$/.test(k)); // internal ids (agentId, listerId) stay out of the CSV
   const esc = (v) => { const s = v === undefined || v === null ? '' : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   return [cols.join(','), ...rows.map((r) => cols.map((c) => esc(MONEY_COLS.has(c) ? rupees(r[c]) : r[c])).join(','))].join('\n');
 }
@@ -225,7 +269,7 @@ async function runExport({ exportId }) {
     const file = await storage.save({ buffer: Buffer.from(csv, 'utf8'), originalname: `${key}.csv`, mimetype: 'text/csv' }, { ownerId: user._id, purpose: 'data_export' });
     Object.assign(job, { status: 'ready', fileId: file._id, rows: data.rows.length, expiresAt: new Date(Date.now() + DAY) });
     await job.save();
-    await notifyUser({ user, event: 'export.ready', vars: { kind: key, rows: data.rows.length, link: `/admin/exports/${job._id}` }, channels: ['in_app', 'email'] });
+    await notifyUser({ user, event: 'export.ready', vars: { kind: key, rows: data.rows.length, link: `/admin/reports/${key}` }, channels: ['in_app', 'email'] });
   } catch (err) {
     Object.assign(job, { status: 'failed', error: String(err.message).slice(0, 500) });
     await job.save();

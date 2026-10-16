@@ -1,19 +1,16 @@
-// Outbound WhatsApp template sends for agents (RE-K-08). core/notify has no
-// WhatsApp transport yet, so this logs like the SMS console provider; in tests
-// messages are captured in core/notify `sent` (channel 'whatsapp').
-// The Meta Cloud API transport (WHATSAPP_PROVIDER=meta) is not built yet and
-// falls back to the console as well.
-const env = require('../../config/env');
-const logger = require('../../core/logger');
-const { sent } = require('../../core/notify');
+// Outbound WhatsApp template sends for agents (RE-K-08, workflow K2 step 5).
+// Uses the core/notify WhatsApp transport: console in development, captured in
+// core/notify `sent` (channel 'whatsapp') in tests, and the Meta Cloud API
+// when WHATSAPP_PROVIDER=meta. `template` is the agent template key
+// (share_listing, visit_confirmation); the approved Meta template name,
+// language and parameter order come from the whatsapp.<key> notification template.
+const notify = require('../../core/notify');
 
-async function sendWhatsapp({ to, text, template }) {
-  if (env.isTest) {
-    sent.push({ channel: 'whatsapp', to, text, template });
-    return { provider: 'test' };
-  }
-  logger.info({ to, template, text }, '[whatsapp:console]');
-  return { provider: 'console' };
+async function sendWhatsapp({ to, text, template, vars = {} }) {
+  const { template: load } = require('../notifications/service');
+  const t = await load(`whatsapp.${template}`, 'whatsapp');
+  const meta = t && t.waTemplateName ? { name: t.waTemplateName, language: t.language, params: t.params.map((k) => (vars[k] !== undefined ? String(vars[k]) : '')) } : null;
+  return notify.sendWhatsapp({ to, text, template: meta });
 }
 
 module.exports = { sendWhatsapp };

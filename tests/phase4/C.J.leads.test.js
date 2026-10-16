@@ -299,8 +299,11 @@ describe('[F][admin] RE-F-10 Seeker behaviour flags', () => {
     const r = await enquire(p, { phone });
     expect(r.status).toBe(429);
     await request(app).patch(`/api/admin/seeker-flags/${flags.body.data[0]._id}`).set(A).send({ action: 'block', note: 'Broker scraping' }).expect(200);
+    // RE-F-10 acceptance 7: blocked looks exactly like rate-limited (no reason disclosed).
     const blocked = await request(app).post('/api/leads/otp').send({ phone });
-    expect(blocked.body.error.code).toBe('SEEKER_BLOCKED');
+    expect(blocked.status).toBe(r.status);
+    expect(blocked.body.error).toMatchObject({ code: r.body.error.code, message: r.body.error.message });
+    expect(blocked.body.error.code).toBe('RATE_LIMITED');
     notify.sent.length = 0;
   });
 });

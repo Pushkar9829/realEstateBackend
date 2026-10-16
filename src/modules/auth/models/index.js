@@ -57,7 +57,11 @@ const userSchema = new mongoose.Schema({
   },
   kyc: kycSchema,
   billing: { name: String, gstin: String, address: String, state: String }, // listers: invoice recipient
-  brand: { name: String, logoUrl: String, approved: Boolean }, // builders
+  brand: { // builders; RE-B-02: a change waits in `pending` until an admin approves it
+    name: String, logoUrl: String, logoFileId: ObjectId, approved: Boolean,
+    pending: { name: String, logoUrl: String, logoFileId: ObjectId, requestedAt: Date },
+    reviewedBy: ObjectId, reviewedAt: Date, rejectReason: String,
+  },
   referralCode: { type: String, unique: true, sparse: true },
   referredBy: { type: String, immutable: true },
   referralCapturedAt: Date,

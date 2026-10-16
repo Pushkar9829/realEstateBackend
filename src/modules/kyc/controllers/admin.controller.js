@@ -45,6 +45,7 @@ Object.assign(module.exports, {
   flagDetail: run((req) => kyc.flagDetail(req.params.id)),
   manualFlag: run((req) => kyc.manualFlag(req.body, req), 201),
   resolve: run((req) => kyc.resolveFlag(req.params.id, req.body, req)),
+  approveBrand: run((req) => require('../brand.service').decide(req.params.id, req.body, req)), // RE-B-02
 });
 
 

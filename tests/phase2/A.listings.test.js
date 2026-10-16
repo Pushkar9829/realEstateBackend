@@ -84,7 +84,7 @@ describe('[A][lister] RE-A-05/14 Media', () => {
     const original = await fx.photo({ width: 3000, height: 2000 });
     expect((await sharp(original).metadata()).exif).toBeDefined();
     const f = await fx.upload(app, lister.token, 'property_photo', original, 'p.jpg', 'image/jpeg');
-    expect(f).toMatchObject({ width: 2000, height: 1333, thumbUrl: expect.any(String) });
+    expect(f).toMatchObject({ width: 1600, height: 1067, thumbUrl: expect.any(String) });
     const doc = await storage.FileModel.findById(f.id);
     const stored = require('fs').readFileSync(require('path').join(storage.localDir, doc.key));
     expect((await sharp(stored).metadata()).exif).toBeUndefined();

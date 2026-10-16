@@ -53,6 +53,19 @@ async function withdrawConsent(user, purpose, req) {
   return { purpose, withdrawn: r.modifiedCount };
 }
 
+// Consents a signed-in user may give themselves (banner, account page). Sales contact and partner
+// sharing are recorded by their own flows. Idempotent: an active consent is returned as is.
+const SELF_GRANTABLE = ['analytics', 'whatsapp_updates', 'marketing_alerts'];
+async function giveConsent(user, { purpose, source = 'banner' }, req) {
+  if (!SELF_GRANTABLE.includes(purpose)) throw ApiError.badRequest('This consent is given through its own flow', 'CONSENT_NOT_SELF_GRANTABLE');
+  const active = await Consent.findOne({ subjectType: 'user', subjectId: user._id, purpose, withdrawnAt: null });
+  if (active) return active;
+  const settings = require('../../../core/settings');
+  const [doc] = await Consent.create([{ subjectType: 'user', subjectId: user._id, purpose, source, noticeVersion: await settings.get('privacy.noticeVersion'), ip: req.ip }]);
+  await audit(req, { action: 'consent.give', entityType: 'User', entityId: user._id, after: { purpose, source } });
+  return doc;
+}
+
 // Active consent check used by notification and lead modules.
 const hasConsent = async (subjectId, purpose) => Boolean(await Consent.exists({ subjectId, purpose, withdrawnAt: null }));
 
@@ -74,6 +87,26 @@ async function requestDataExport(user, req) {
   await audit(req, { action: 'privacy.export_requested', entityType: 'User', entityId: user._id });
   return { exportId: job._id, status: job.status };
 }
+
+// Latest "download my data" request (last 24 h) with a short-lived link once
+// it is ready; the account page polls this while the job runs.
+async function latestDataExport(user, req) {
+  const { ExportJob } = require('../../reports/models');
+  const job = await ExportJob.findOne({ requestedBy: user._id, kind: 'my_data', createdAt: { $gt: new Date(Date.now() - 86400000) } }).sort({ createdAt: -1 });
+  if (!job) return null;
+  const out = { exportId: job._id, status: job.status, requestedAt: job.createdAt, expiresAt: job.expiresAt, error: job.error };
+  if (job.status === 'ready' && job.expiresAt && job.expiresAt < new Date()) return { ...out, status: 'expired' };
+  if (job.status === 'ready') {
+    const file = await storage.FileModel.findById(job.fileId);
+    if (!file) return { ...out, status: 'expired' };
+    await audit(req, { action: 'privacy.export_downloaded', entityType: 'User', entityId: user._id });
+    return { ...out, url: storage.urlFor(file, 600) };
+  }
+  return out;
+}
+
+// Latest deletion request of the signed-in buyer / lister (or null).
+const myDeletionRequest = (user) => DeletionRequest.findOne({ userId: user._id }).sort({ createdAt: -1 }).select('status reason note createdAt processedAt').lean();
 
 // Job handler: collects the user's personal data into a private JSON file.
 async function buildDataExport({ exportId }) {
@@ -111,6 +144,6 @@ function deletionQueue(query) {
 }
 
 module.exports = {
-  getMe, updateMe, listSessions, loginHistory, consents, withdrawConsent, hasConsent,
-  requestDeletion, requestDataExport, buildDataExport, userConsents, deletionQueue,
+  getMe, updateMe, listSessions, loginHistory, consents, giveConsent, withdrawConsent, hasConsent,
+  requestDeletion, requestDataExport, latestDataExport, myDeletionRequest, buildDataExport, userConsents, deletionQueue,
 };

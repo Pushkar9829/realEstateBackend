@@ -3,6 +3,7 @@
 const router = require('express').Router();
 const c = require('../controllers/agent.controller');
 
+router.get('/availability', c.myAvailability); // agent: Own availability and leave (RE-S-AGT-16)
 router.patch('/availability', c.availabilityLeave); // agent: Availability / leave
 
 module.exports = router;

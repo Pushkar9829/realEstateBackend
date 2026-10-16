@@ -8,7 +8,11 @@ module.exports = {
     admin: require('./routes/admin.routes'),
     public: require('./routes/public.routes'),
   },
-  register() {},
+  // RE-N-07: optional user.signup outbox event (only when mlm.events lists it).
+  register() {
+    const events = require('../../core/events');
+    events.on(events.EVENTS.USER_REGISTERED, (p) => require('./service').recordSignup(p));
+  },
 };
 
 function fileExists(rel) {

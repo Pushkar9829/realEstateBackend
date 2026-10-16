@@ -1,11 +1,12 @@
 // Module C background work (workflows C3, C4, C6, C7): first-contact SLA,
 // unassigned escalation, stale leads, visit reminders and feedback requests,
-// offer reminders and expiry, auto-close on sold properties.
+// offer reminders and expiry, missing visit outcomes, auto-close on sold
+// properties. Buyer texts go by WhatsApp when the buyer opted in (RE-K-08).
 const { Lead, SiteVisit, Offer, FollowUp } = require('./models');
 const { User } = require('../auth/models');
 const settings = require('../../core/settings');
 const env = require('../../config/env');
-const { notifyUser, notifyPermission, sendNow } = require('../notifications/service');
+const { notifyUser, notifyPermission, notifyLeadBuyer } = require('../notifications/service');
 const common = require('./common');
 
 async function managersOf(teamId) {
@@ -88,7 +89,7 @@ async function visitReminder({ visitId, kind, scheduledAt }) {
   const vars = { visitNo: v.visitNo, when, listingNo: v.propertyId.listingNo, meetingPoint: v.meetingPoint || 'At the property' };
   const lead = await Lead.findById(v.leadId);
   if (kind.startsWith('buyer') && lead) {
-    if (lead.buyer.userId) { const u = await User.findById(lead.buyer.userId); if (u) await notifyUser({ user: u, event: 'sitevisit.reminder', channels: ['sms', 'in_app'], vars }); } else await sendNow({ channel: 'sms', to: lead.buyer.phone, event: 'sitevisit.reminder', vars, fallbackEmail: lead.buyer.email }).catch(() => {});
+    await notifyLeadBuyer(lead, { event: 'sitevisit.reminder', channels: ['sms', 'in_app'], vars });
   } else if (kind === 'agent1' && v.agentId) {
     const a = await User.findById(v.agentId); if (a) await notifyUser({ user: a, event: 'sitevisit.reminder', vars });
   } else if (kind === 'lister24') {
@@ -104,7 +105,7 @@ async function feedbackRequest({ visitId, token }) {
   if (!v || v.status !== 'completed' || (v.feedback && v.feedback.submittedAt)) return 'skipped';
   const lead = await Lead.findById(v.leadId);
   const vars = { visitNo: v.visitNo, listingNo: v.propertyId.listingNo, link: `${env.CLIENT_URL}/visit-feedback/${token}` };
-  if (lead.buyer.userId) { const u = await User.findById(lead.buyer.userId); if (u) await notifyUser({ user: u, event: 'sitevisit.feedback_request', channels: ['email', 'sms', 'in_app'], vars }); } else await sendNow({ channel: 'sms', to: lead.buyer.phone, event: 'sitevisit.feedback_request', vars, fallbackEmail: lead.buyer.email }).catch(() => {});
+  await notifyLeadBuyer(lead, { event: 'sitevisit.feedback_request', channels: ['email', 'sms', 'in_app'], vars });
   v.feedback.sentAt = new Date();
   v.markModified('feedback');
   await v.save();
@@ -125,7 +126,9 @@ async function offerSweep(now = new Date()) {
   for (const o of expired) {
     o.status = 'expired';
     await o.save();
-    for (const id of [o.agentId, o.listerId]) { const u = await User.findById(id); if (u) await notifyUser({ user: u, event: 'offer.closed', vars: { offerNo: o.offerNo, status: 'expired' } }); }
+    const p = await require('../listings/models').Property.findById(o.propertyId).select('listingNo').lean();
+    const vars = { offerNo: o.offerNo, buyerLabel: o.buyerLabel || 'the buyer', listingNo: (p && p.listingNo) || '', leadId: String(o.leadId) };
+    for (const [id, link] of [[o.agentId, `/agent/leads/${o.leadId}`], [o.listerId, '/lister/offers']]) { const u = id && await User.findById(id); if (u) await notifyUser({ user: u, event: 'offer.expired', vars: { ...vars, link } }); }
     const lead = await Lead.findById(o.leadId);
     if (lead) { common.entry(lead, 'offer', null, { offerNo: o.offerNo, kind: 'expired' }); await lead.save(); }
   }
@@ -152,6 +155,28 @@ async function requestedVisitsFlag(now = new Date()) {
   return rows.length;
 }
 
+// Visits past their slot by visit.outcomeDueHours (24) still without an outcome:
+// tell the agent and the team managers once (sitevisit.outcome_pending).
+async function outcomePending(now = new Date()) {
+  const hours = await settings.get('visit.outcomeDueHours');
+  const rows = await SiteVisit.find({ status: { $in: ['scheduled', 'confirmed'] }, scheduledAt: { $lt: new Date(now.getTime() - hours * 3600000) }, remindersSent: { $ne: 'outcome_pending' } })
+    .populate('propertyId', 'listingNo').limit(200);
+  for (const v of rows) {
+    const lead = await Lead.findById(v.leadId).select('leadNo teamId').lean();
+    const when = v.scheduledAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+    const vars = { visitNo: v.visitNo, when, listingNo: (v.propertyId && v.propertyId.listingNo) || '', leadNo: lead ? lead.leadNo : '', leadId: lead ? String(lead._id) : '' };
+    const people = [...(v.agentId ? [await User.findById(v.agentId)] : []), ...await managersOf(lead && lead.teamId)].filter(Boolean);
+    const seen = new Set();
+    for (const u of people) {
+      if (seen.has(String(u._id))) continue;
+      seen.add(String(u._id));
+      await notifyUser({ user: u, event: 'sitevisit.outcome_pending', vars: { ...vars, link: `/${u.role === 'agent' ? 'agent' : 'admin'}/leads/${vars.leadId}` } });
+    }
+    await SiteVisit.updateOne({ _id: v._id }, { $addToSet: { remindersSent: 'outcome_pending' } });
+  }
+  return rows.length;
+}
+
 function register() {
   const jobs = require('../../core/jobs');
   const { daily } = require('../../core/schedule');
@@ -162,8 +187,9 @@ function register() {
   jobs.every('leads.unassigned', 5 * 60 * 1000, () => unassignedEscalation());
   jobs.every('leads.offers', 15 * 60 * 1000, () => offerSweep());
   jobs.every('leads.requested_visits', 60 * 60 * 1000, () => requestedVisitsFlag());
+  jobs.every('leads.visit_outcomes', 60 * 60 * 1000, () => outcomePending());
   daily('leads.stale', { hour: 9 }, () => staleDigest());
   daily('leads.autoclose', { hour: 2 }, () => autoCloseSold());
 }
 
-module.exports = { register, slaSweep, unassignedEscalation, staleDigest, autoCloseSold, visitReminder, feedbackRequest, offerSweep, followupReminder, requestedVisitsFlag };
+module.exports = { register, slaSweep, unassignedEscalation, staleDigest, autoCloseSold, visitReminder, feedbackRequest, offerSweep, followupReminder, requestedVisitsFlag, outcomePending };

@@ -244,8 +244,37 @@ async function verifyLogin2fa({ challengeToken, code, recoveryCode }, req) {
 
   user.lastLoginAt = new Date();
   await user.save();
+  const newDevice = await isNewDevice(user, req);
   const out = await sessions.start(user, req, method);
+  if (newDevice) await notifyNewDevice(user, req);
   return { ...out, home: HOME[user.role], mustChangePassword: Boolean(user.mustChangePassword), user: user.toJSON() };
+}
+
+// ---------------------------------------------------------------- new-device alert (auth.new_device_login)
+
+// "Chrome on Windows" style label from a user agent (no dependency).
+function deviceLabel(ua) {
+  const s = String(ua || '');
+  if (!s) return 'an unknown device';
+  const browser = /Edg\//.test(s) ? 'Edge' : /OPR\/|Opera/.test(s) ? 'Opera' : /Firefox\//.test(s) ? 'Firefox' : /Chrome\//.test(s) ? 'Chrome' : /Safari\//.test(s) ? 'Safari' : null;
+  const os = /Android/.test(s) ? 'Android' : /iPhone|iPad|iOS/.test(s) ? 'iOS' : /Windows/.test(s) ? 'Windows' : /Mac OS X|Macintosh/.test(s) ? 'macOS' : /Linux/.test(s) ? 'Linux' : null;
+  if (browser || os) return [browser, os].filter(Boolean).join(' on ');
+  return s.slice(0, 60);
+}
+
+// New = the user has signed in before, but never from this ip + device.
+async function isNewDevice(user, req) {
+  const { LoginHistory } = require('../models');
+  if (!(await LoginHistory.exists({ userId: user._id, success: true }))) return false; // first sign-in
+  return !(await sessions.isKnownDevice(user._id, req));
+}
+
+async function notifyNewDevice(user, req) {
+  const { ip, ua } = sessions.clientInfo(req);
+  try {
+    await notifyUser({ user, event: 'auth.new_device_login', channels: ['email'], vars: { device: deviceLabel(ua), ip: ip || 'an unknown address' } });
+    await securityEvent(req, 'login.new_device', { userId: user._id });
+  } catch { /* the alert never blocks a sign-in */ }
 }
 
 const refresh = ({ refreshToken }, req) => sessions.rotate(refreshToken, req);
@@ -378,5 +407,5 @@ async function becomeLister(user, { listerType, companyName }, req) {
 module.exports = {
   register, verifyContact, resendOtp, login, verifyLogin2fa, refresh, logout, logoutAll,
   forgotPassword, resetPassword, changePassword, totpSetup, totpEnable, totpDisable, setOtpMethod, becomeLister,
-  uniqueReferralCode, hashPassword, maskEmail, maskPhone, isIndian, HOME, BCRYPT_COST,
+  uniqueReferralCode, hashPassword, maskEmail, maskPhone, isIndian, HOME, BCRYPT_COST, deviceLabel,
 };

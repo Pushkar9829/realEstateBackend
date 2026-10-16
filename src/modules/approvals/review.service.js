@@ -122,6 +122,7 @@ async function decide(id, body, req) {
   }
 
   const now = new Date();
+  const fromStatus = p.status; // audit before / after (RE-O-01 acceptance 1)
   p.review = { ...(p.review ? p.review.toObject() : {}), checklist: d.checklist, proofOwnerName: d.proofOwnerName || (p.review && p.review.proofOwnerName), reviewedBy: req.user._id, reviewedAt: now, claimedBy: undefined, claimUntil: undefined };
   p.reviewComments = d.comments ? d.comments.map((c) => ({ ...c, by: req.user._id, at: now })) : p.reviewComments;
 
@@ -142,7 +143,7 @@ async function decide(id, body, req) {
   }
   await p.save();
   if (d.proofOwnerName) await kyc.checkProofOwners(lister); // rule R1
-  await audit(req, { action: `listing.${isRevision ? 'revision.' : ''}${d.decision}`, entityType: 'Property', entityId: p._id, reason: d.reason, after: { status: p.status } });
+  await audit(req, { action: `listing.${isRevision ? 'revision.' : ''}${d.decision}`, entityType: 'Property', entityId: p._id, reason: d.reason, before: { status: fromStatus }, after: { status: p.status } });
 
   const vars = { listingNo: p.listingNo, title: p.title, propertyId: String(p._id), summary: (d.comments || []).map((c) => `${c.field}: ${c.comment}`).join('; '), reason: d.reason, expiresAt: p.expiresAt ? p.expiresAt.toDateString() : '' };
   const event = { approve: 'listing.approved', changes: 'listing.changes_requested', reject: 'listing.rejected' }[d.decision];

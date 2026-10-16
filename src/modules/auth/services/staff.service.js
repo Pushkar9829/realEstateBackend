@@ -64,16 +64,25 @@ async function staffOr404(id, req, { allowSelf = false } = {}) {
 
 async function edit(id, data, req) {
   const user = await staffOr404(id, req);
-  const before = { teamId: user.teamId, permissions: user.permissions };
+  const before = { role: user.role, teamId: user.teamId, permissions: user.permissions };
   if (data.name) user.name = data.name;
   if (data.teamId !== undefined) user.teamId = data.teamId || undefined;
-  if (data.permissions) {
+  const roleChanged = data.role && data.role !== user.role;
+  if (roleChanged) {
+    // RE-S-ADM-16: a super admin is never demoted here; admin roles are super-admin only.
+    if (user.role === 'superadmin') throw ApiError.forbidden('A super admin cannot be demoted', 'SUPERADMIN_PROTECTED');
+    if ((data.role === 'admin' || user.role === 'admin') && req.user.role !== 'superadmin') throw ApiError.forbidden('Only a super admin can grant or remove the admin role');
+    user.role = data.role;
+  }
+  if (data.permissions || roleChanged) {
     if (user.role === 'admin' && req.user.role !== 'superadmin') throw ApiError.forbidden('Only a super admin can change admin permissions');
-    user.extraPermissions = data.permissions;
-    user.permissions = effectivePermissions(user.role, data.permissions);
+    const extra = data.permissions || (user.role === 'agent' ? (user.extraPermissions || []).filter((k) => k === 'verification.field') : user.extraPermissions || []);
+    user.extraPermissions = extra;
+    user.permissions = effectivePermissions(user.role, extra);
   }
   await user.save();
-  await audit(req, { action: 'staff.edit', entityType: 'User', entityId: user._id, before, after: { teamId: user.teamId, permissions: user.permissions } });
+  if (roleChanged) await sessions.revokeAll(user._id); // the role is in the access token: sign in again
+  await audit(req, { action: 'staff.edit', entityType: 'User', entityId: user._id, before, after: { role: user.role, teamId: user.teamId, permissions: user.permissions } });
   return user.toJSON();
 }
 
@@ -81,6 +90,10 @@ async function edit(id, data, req) {
 // manager queue (unassigned); sessions are revoked.
 async function disable(id, { reason, reassignTo }, req) {
   const user = await staffOr404(id, req);
+  if (user.role === 'superadmin' && (await User.countDocuments({ role: 'superadmin', status: 'active' })) <= 1) {
+    throw ApiError.conflict('The last super admin cannot be disabled', 'LAST_SUPERADMIN');
+  }
+  if (user.status === 'disabled') throw ApiError.conflict('This staff member is already disabled', 'ALREADY_DISABLED');
   const { Lead } = require('../../leads/models');
   let moved = 0;
   if (reassignTo) {
@@ -100,6 +113,18 @@ async function disable(id, { reason, reassignTo }, req) {
   return { disabled: true, leadsMoved: moved };
 }
 
+// Re-enable a disabled staff member. Sessions were revoked on disable, so
+// they sign in again; leads moved away are not moved back.
+async function enable(id, req) {
+  const user = await staffOr404(id, req);
+  if (user.status !== 'disabled') throw ApiError.conflict('This staff member is not disabled', 'NOT_DISABLED');
+  user.status = 'active';
+  user.failedLogins = 0;
+  await user.save();
+  await audit(req, { action: 'staff.enable', entityType: 'User', entityId: user._id, before: { status: 'disabled' }, after: { status: 'active' } });
+  return { enabled: true, status: user.status };
+}
+
 async function reset2fa(id, req) {
   const user = await staffOr404(id, req);
   await auth.setOtpMethod(user._id, 'email', req, { actor: req.user });
@@ -114,4 +139,4 @@ async function forceLogout(id, req) {
   return { loggedOut: true };
 }
 
-module.exports = { list, create, edit, disable, reset2fa, forceLogout, effectivePermissions };
+module.exports = { list, create, edit, disable, enable, reset2fa, forceLogout, effectivePermissions };

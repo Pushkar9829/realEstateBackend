@@ -13,7 +13,7 @@ const settings = require('../../core/settings');
 const env = require('../../config/env');
 const { ApiError } = require('../../core/http');
 const { audit } = require('../../core/audit');
-const { notifyUser, sendNow } = require('../notifications/service');
+const { notifyUser, notifyLeadBuyer, sendNow, whatsappOptedIn } = require('../notifications/service');
 const guard = require('../masking/guard');
 const reveal = require('../masking/reveal.service');
 const common = require('./common');
@@ -168,6 +168,7 @@ async function detail(user, id) {
     FollowUp.findOne({ leadId: l._id, status: 'open' }).sort({ dueAt: 1 }).select('type dueAt note').lean(),
     visitPhotoUrls(visits), settings.get('whatsapp.enabled'),
   ]);
+  const waOptIn = waEnabled ? await buyerWhatsappOptIn(l) : false;
   return {
     ...leadRow(l), buyer: { name: l.buyer.name, phone: maskPhone(l.buyer.phone), hasEmail: Boolean(l.buyer.email) }, referralCode: l.referralCode,
     lostReason: l.lostReason, lostNote: l.lostNote, linkedProperties: l.linkedProperties, callAttempts: l.callAttempts, whatsappOptIn: l.whatsappOptIn, utm: l.utm,
@@ -177,7 +178,7 @@ async function detail(user, id) {
     followups, offers, properties: linked, reassignRequests: l.reassignRequests,
     deal, agent: l.assignedTo ? { _id: l.assignedTo, name: names[String(l.assignedTo)] } : null, team: team ? { _id: team._id, name: team.name } : null,
     seekerFlag, nextFollowUp,
-    whatsapp: whatsappState(waEnabled, l),
+    whatsapp: whatsappState(waEnabled, waOptIn),
   };
 }
 
@@ -211,9 +212,12 @@ async function visitPhotoUrls(visits) {
   }]));
 }
 
-function whatsappState(enabled, l) {
+// Opt-in from the consent ledger (a later opt-out wins); the enquiry checkbox when no record exists.
+const buyerWhatsappOptIn = (l) => whatsappOptedIn([l.buyer && l.buyer.userId, l.buyer && l.buyer.contactId], l.whatsappOptIn);
+
+function whatsappState(enabled, optedIn) {
   if (!enabled) return { allowed: false, code: 'WHATSAPP_DISABLED', reason: 'WhatsApp Business is not enabled' };
-  if (!l.whatsappOptIn) return { allowed: false, code: 'WHATSAPP_NOT_OPTED_IN', reason: 'The buyer has not opted in to WhatsApp' };
+  if (!optedIn) return { allowed: false, code: 'WHATSAPP_NOT_OPTED_IN', reason: 'The buyer has not opted in to WhatsApp' };
   return { allowed: true };
 }
 
@@ -221,7 +225,8 @@ function whatsappState(enabled, l) {
 async function whatsappTemplate(user, id, body) {
   const d = z.object({ template: z.enum(['share_listing', 'visit_confirmation']), propertyId: oid.optional(), visitId: oid.optional() }).parse(body);
   const lead = await scopedLead(user, id);
-  const state = whatsappState(await settings.get('whatsapp.enabled'), lead);
+  const enabled = await settings.get('whatsapp.enabled');
+  const state = whatsappState(enabled, enabled && await buyerWhatsappOptIn(lead));
   if (!state.allowed) throw ApiError.conflict(state.reason, state.code);
   const agent = await User.findById(lead.assignedTo || user._id).select('name').lean();
   const vars = { name: lead.buyer.name ? lead.buyer.name.split(' ')[0] : 'there', agent: agent ? agent.name.split(' ')[0] : 'our agent', leadNo: lead.leadNo };
@@ -245,7 +250,7 @@ async function whatsappTemplate(user, id, body) {
   const { template, render } = require('../notifications/service');
   const t = await template(`whatsapp.${d.template}`, 'whatsapp');
   const text = render(t.body, vars);
-  const r = await sendWhatsapp({ to: lead.buyer.phone, text, template: d.template });
+  const r = await sendWhatsapp({ to: lead.buyer.phone, text, template: d.template, vars });
   common.entry(lead, 'whatsapp', user._id, data);
   await lead.save();
   return { sent: true, template: d.template, provider: r.provider, text };
@@ -462,9 +467,7 @@ async function notifyScheduled(v, lead, p, event, { reason } = {}) {
   const when = v.scheduledAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
   const agent = await User.findById(v.agentId).select('name').lean();
   const vars = { visitNo: v.visitNo, when, meetingPoint: v.meetingPoint || 'At the property', note: v.buyerNote ? ` Note: ${v.buyerNote}.` : '', agent: agent ? agent.name.split(' ')[0] : 'our agent', link: `${env.CLIENT_URL}/visit/${token}`, listingNo: p.listingNo };
-  if (lead.buyer.userId) { const u = await User.findById(lead.buyer.userId); if (u) await notifyUser({ user: u, event, channels: ['in_app', 'email', 'sms'], vars }); } else {
-    await sendNow({ channel: 'sms', to: lead.buyer.phone, event, vars, fallbackEmail: lead.buyer.email }).catch(() => {});
-  }
+  await notifyLeadBuyer(lead, { event, channels: ['in_app', 'email', 'sms'], vars }); // WhatsApp when opted in (RE-K-08)
   const lister = await User.findById(p.listerId);
   if (lister) {
     const listerEvent = reason ? 'sitevisit.lister_rescheduled' : 'sitevisit.lister_planned';

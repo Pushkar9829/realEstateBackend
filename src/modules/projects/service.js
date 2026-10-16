@@ -193,7 +193,16 @@ async function decrementOnDeal(projectId, configId, actor) {
   const r = await Project.updateOne({ _id: projectId, configurations: { $elemMatch: { _id: configId, availableUnits: { $gt: 0 } } } },
     { $inc: { 'configurations.$.availableUnits': -1 }, $push: { inventoryLog: { configId, by: actor, reason: 'deal', at: new Date() } } });
   const p = await Project.findById(projectId);
-  if (p) { recomputeSoldOut(p, actor); await p.save(); }
+  if (p) {
+    recomputeSoldOut(p, actor);
+    await p.save();
+    const c = p.configurations.id(configId);
+    // project.unit_sold: the builder sees the new available count for the configuration.
+    if (r.modifiedCount === 1 && c) {
+      const builder = await User.findById(p.builderId);
+      if (builder) await notifyUser({ user: builder, event: 'project.unit_sold', channels: ['in_app'], vars: { projectNo: p.projectNo, projectId: String(p._id), configName: c.name, available: c.availableUnits } });
+    }
+  }
   return { decremented: r.modifiedCount === 1, warning: r.modifiedCount === 1 ? null : 'Inventory already 0' };
 }
 

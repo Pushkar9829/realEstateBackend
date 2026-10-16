@@ -14,6 +14,7 @@ router.get('/listers', ...g.staffOnly, c.list); // admin: List
 router.get('/listers/:id', ...g.staffOnly, c.detailGet); // admin: Detail
 router.patch('/listers/:id/status', ...g.can('listers.manage'), c.suspendBanReinstate); // admin (listers.manage): Suspend / ban / reinstate
 router.patch('/listers/:id/limits', ...g.can('listers.manage'), c.listingLimitOverride); // admin (listers.manage): Listing limit override
+router.post('/listers/:id/approve-brand', ...g.can('listers.verify', 'listers.manage'), c.approveBrand); // admin (listers.verify or listers.manage): Approve / reject pending brand (RE-B-02)
 router.get('/broker-flags', ...g.can('listers.manage'), c.flags); // admin (listers.manage): Flags
 router.get('/broker-flags/:id', ...g.can('listers.manage'), c.flagDetail); // admin (listers.manage): Flag detail
 router.post('/broker-flags', ...g.can('listers.manage'), c.manualFlag); // admin (listers.manage): Manual flag

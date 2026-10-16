@@ -64,7 +64,7 @@ const propertySchema = new mongoose.Schema({
   },
   amenities: [String],
   rera: {
-    numbers: [String], state: String, url: String, inheritedFromProject: Boolean,
+    numbers: [String], state: String, url: String, certificateFileId: ObjectId, inheritedFromProject: Boolean,
     exempt: { reason: String, docFileId: ObjectId, approvedBy: ObjectId, approvedAt: Date },
   },
   media: {
@@ -102,6 +102,16 @@ const propertySchema = new mongoose.Schema({
   revisionNo: { type: Number, default: 0 },
   deletedAt: Date,
 }, { timestamps: true });
+
+// Workflow A4 step 4: status changes (from any module) are noticed here and the
+// agents on the listing's open leads are told after the save (lead-agents.service).
+propertySchema.post('init', function rememberStatus() { this.$locals.loadedStatus = this.status; });
+propertySchema.pre('save', function recordStatusChange() {
+  const was = this.$locals.loadedStatus;
+  if (!this.isNew && was && was !== this.status) (this.$locals.statusChanges = this.$locals.statusChanges || []).push({ from: was, to: this.status });
+  this.$locals.loadedStatus = this.status;
+});
+propertySchema.post('save', async function notifyLeadAgents(doc) { await require('../lead-agents.service').flush(doc); });
 
 propertySchema.index({ 'location.geo': '2dsphere' });
 propertySchema.index({ 'location.publicGeo': '2dsphere' });
