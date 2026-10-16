@@ -240,7 +240,17 @@ async function detail(slug) {
   if (!p) throw (await unavailable(slug)) || ApiError.notFound('Property not found or no longer available');
   const s = await settings.all();
   const lister = await User.findById(p.listerId).select(serializer.LISTER_FIELDS).lean();
-  return serializer.toPublicProperty(p, lister, s);
+  return serializer.toPublicProperty(p, lister, s, await linkedProject(p));
+}
+
+// The builder project a unit listing is linked to, only while that project is public.
+async function linkedProject(p) {
+  if (!p.projectId) return null;
+  const { Project } = require('../projects/models');
+  const pr = await Project.findOne({ _id: p.projectId, status: { $in: ['live', 'sold_out'] }, deletedAt: null }).select('name slug configurations._id configurations.name').lean();
+  if (!pr || !pr.slug) return null;
+  const cfg = p.unitConfigId && (pr.configurations || []).find((c) => String(c._id) === String(p.unitConfigId));
+  return { name: pr.name, slug: pr.slug, configuration: cfg ? cfg.name : undefined };
 }
 
 async function similar(id) {

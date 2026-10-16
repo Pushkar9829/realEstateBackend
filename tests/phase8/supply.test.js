@@ -123,6 +123,13 @@ describe('[G][lister] RE-G-07 Linked unit listings', () => {
     const p = await Property.findById(draft._id);
     expect(p).toMatchObject({ status: 'live' });
     expect(String(p.projectId)).toBe(String(project._id));
+    // Public detail shows "Part of <project>" with the unit configuration, and nothing private.
+    const pub = await request(app).get(`/api/properties/${p.slug || p._id}`).expect(200);
+    expect(pub.body.data.project).toEqual({ name: 'Skyline Heights', slug: project.slug, configuration: '2 BHK Type A' });
+    // Once the project is no longer public the link disappears.
+    await Project.updateOne({ _id: project._id }, { $set: { status: 'inactive' } });
+    expect((await request(app).get(`/api/properties/${p.slug || p._id}`).expect(200)).body.data.project).toBeUndefined();
+    await Project.updateOne({ _id: project._id }, { $set: { status: 'live' } });
   });
 });
 

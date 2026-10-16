@@ -70,7 +70,8 @@ function toPublicCard(p, lister, s) {
 }
 
 // Full masked detail (RE-S-PUB-04).
-function toPublicProperty(p, lister, s) {
+// `project`: the live builder project a linked unit listing belongs to (RE-G-07), shown as "Part of <project>".
+function toPublicProperty(p, lister, s, project = null) {
   return {
     ...toPublicCard(p, lister, s),
     description: p.description,
@@ -89,6 +90,7 @@ function toPublicProperty(p, lister, s) {
       : undefined,
     availabilityConfirmedAt: (p.availability && p.availability.lastConfirmedAt) || p.liveAt,
     stats: { views: (p.stats && p.stats.views) || 0 },
+    project: project ? { name: project.name, slug: project.slug, configuration: project.configuration } : undefined,
     hotline: s['general.hotlineNumber'],
     whatsapp: s['general.whatsappNumber'] || undefined,
   };

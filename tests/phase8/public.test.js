@@ -109,3 +109,19 @@ describe('[L][public] RE-L-09 robots.txt', () => {
     expect(sm).toBe(`Sitemap: ${env.API_PUBLIC_URL.replace(/\/$/, '')}/api/sitemap.xml`);
   });
 });
+
+describe('[S][public] RE-L-05 Default footer pages', () => {
+  test('the seed text covers every footer page and the pages are served once published', async () => {
+    const { Page } = require('../../src/modules/cms/models');
+    const DEFAULT_PAGES = require('../../scripts/default-pages');
+    expect(DEFAULT_PAGES.map((p) => p.slug).sort()).toEqual(['about', 'careers', 'faq', 'no-broker-policy', 'privacy', 'terms']);
+    for (const p of DEFAULT_PAGES) {
+      expect(p.content.length).toBeGreaterThan(200);
+      expect(p.description.length).toBeLessThanOrEqual(160);
+    }
+    const about = DEFAULT_PAGES[0];
+    await Page.updateOne({ slug: `seedcheck-${about.slug}` }, { $set: { title: about.title, content: about.content, status: 'published', publishedAt: new Date() } }, { upsert: true });
+    const r = await request(app).get(`/api/pages/seedcheck-${about.slug}`).expect(200);
+    expect(r.body.data.content).toMatch(/no-broker|brokers/i);
+  });
+});

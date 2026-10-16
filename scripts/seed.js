@@ -7,6 +7,7 @@ const { connectDb, disconnectDb } = require('../src/config/db');
 const { User } = require('../src/modules/auth/models');
 const { Master, Page, AgreementTemplate } = require('../src/modules/cms/models');
 const { ensureBaseMasters } = require('../src/modules/cms/baseMasters');
+const DEFAULT_PAGES = require('./default-pages');
 
 const CITY = { code: 'pune', name: 'Pune', state: 'Maharashtra', centroid: [73.8567, 18.5204] };
 const LOCALITIES = [['baner', 'Baner', [73.7868, 18.559]], ['wakad', 'Wakad', [73.7629, 18.5975]], ['kharadi', 'Kharadi', [73.9416, 18.5515]],
@@ -40,8 +41,12 @@ async function main() {
     await upsert(Master, { type: 'locality', code }, { type: 'locality', code, name, slug: code, parentId: city._id, meta: { state: CITY.state, centroid: { type: 'Point', coordinates: c } } });
   }
   await ensureBaseMasters(); // property types, amenities, landmark types, KYC document types
-  for (const [slug, title] of [['about', 'About us'], ['no-broker-policy', 'No-broker policy'], ['terms', 'Terms of use'], ['privacy', 'Privacy policy'], ['faq', 'FAQ'], ['careers', 'Careers']]) {
-    await upsert(Page, { slug }, { slug, title, status: 'draft' });
+  // Footer pages ship published with default text; a page an admin already wrote is left alone,
+  // and an untouched empty draft from an older seed is filled in and published.
+  for (const pg of DEFAULT_PAGES) {
+    const doc = { title: pg.title, content: pg.content, meta: { title: pg.title, description: pg.description }, status: 'published', publishedAt: new Date() };
+    await upsert(Page, { slug: pg.slug }, { slug: pg.slug, ...doc, versions: [{ version: 1, content: pg.content, savedAt: new Date() }] });
+    await Page.updateOne({ slug: pg.slug, status: 'draft', content: { $in: ['', null] } }, { $set: doc, $push: { versions: { version: 1, content: pg.content, savedAt: new Date() } } });
   }
   for (const [purpose, basis] of [['sale', 'agreed sale price'], ['rent', 'annual rent (12 x monthly rent)'], ['project', 'agreed sale price of each unit']]) {
     await upsert(AgreementTemplate, { purpose, version: 1 }, { purpose, version: 1, body: TEMPLATE(basis), status: 'published', publishedAt: new Date() });
