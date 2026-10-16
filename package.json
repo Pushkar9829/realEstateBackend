@@ -14,7 +14,8 @@
     "seed:demo": "node scripts/seed-demo-data.js",
     "demo:coverage": "node scripts/demo-coverage.js",
     "routes": "node scripts/print-routes.js",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand",
+    "demo:photos": "node scripts/demo-real-photos.js"
   },
   "jest": {
     "testEnvironment": "node",

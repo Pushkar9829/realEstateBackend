@@ -139,7 +139,7 @@ async function addMedia(ctx, s, user, p, req) {
   const have = (p.media.photos || []).length;
   for (let i = have; i < (s.photos || 0); i += 1) {
     const [label, tag] = rooms[i % rooms.length];
-    const f = await media.uploadPhoto(user._id, 'property_photo', label, `${s.key}:${i}`, { sub: s.title });
+    const f = await media.uploadPhoto(user._id, 'property_photo', label, `${s.key}:${i}`, { sub: s.title, category: media.categoryFor({ type: s.type, category: s.category, tag, label }) });
     await listings.addMedia(user, id, { kind: 'photo', fileId: String(f._id), caption: `${label}${i === 0 ? ' (cover)' : ''}`, tag }, req);
   }
   const fresh = await Property.findById(id);

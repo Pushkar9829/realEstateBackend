@@ -1,9 +1,15 @@
-// Generated demo media: JPEG photos (sharp) with a random tile pattern (so every
-// photo has its own perceptual hash and the duplicate-photo rules stay quiet)
-// and a text label, small valid PDFs (pdfkit) and CSV files. Every file goes
+// Demo media. Photos with a `category` are real free Unsplash photos from
+// photo-pool.json (downloaded once into uploads/.demo-photo-cache, each photo
+// used by one seed key only, so listings never share a photo); without a
+// category, or when the download fails, a generated JPEG with a random tile
+// pattern and a text label is used. Also small valid PDFs (pdfkit) and CSV files. Every file goes
 // through the real pipeline (core/media.processImage + core/storage.save), so
 // renditions, thumbnails and aHashes exist exactly as for a real upload.
 const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const mongoose = require('mongoose');
 const sharp = require('sharp');
 const PDFDocument = require('pdfkit');
 const storage = require('../../src/core/storage');
@@ -18,8 +24,77 @@ function rng(seed) {
 const PALETTES = [[34, 94, 168], [196, 98, 45], [46, 139, 87], [128, 70, 160], [180, 60, 80], [60, 120, 140], [150, 120, 40], [90, 90, 110]];
 const esc = (s) => String(s).replace(/[<>&'"]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', "'": '&apos;', '"': '&quot;' }[c]));
 
+// ---------------------------------------------------------------- real photos
+const POOL = require('./photo-pool.json').pool;
+const CACHE = path.join(__dirname, '..', '..', 'uploads', '.demo-photo-cache');
+const USES = 'demo_photo_uses'; // { _id: seed key, photoId, category, mirror } in the local dev DB
+
+function download(id) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(`https://images.unsplash.com/${id}?w=1600&q=80&fm=jpg`, (res) => {
+      if (res.statusCode !== 200) { res.resume(); reject(new Error(`HTTP ${res.statusCode} for ${id}`)); return; }
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => req.destroy(new Error(`timeout for ${id}`)));
+  });
+}
+
+async function cached(id) {
+  const file = path.join(CACHE, `${id}.jpg`);
+  if (fs.existsSync(file)) return fs.readFileSync(file);
+  const buf = await download(id);
+  fs.mkdirSync(CACHE, { recursive: true });
+  fs.writeFileSync(file, buf);
+  return buf;
+}
+
+// The pool photo for a seed key: the same key always gets the same photo; a new
+// key takes the first photo of the category nobody uses yet (mirrored reuse once
+// the category runs out, so perceptual hashes still differ).
+async function poolPhoto(category, seed, { w, h }) {
+  const ids = POOL[category];
+  if (!ids || !ids.length) throw new Error(`No pool photos for ${category}`);
+  const col = mongoose.connection.db.collection(USES);
+  let use = await col.findOne({ _id: String(seed) });
+  if (!use || !ids.includes(use.photoId)) {
+    const taken = new Set((await col.find({ category }).project({ photoId: 1 }).toArray()).map((r) => r.photoId));
+    const free = ids.find((id) => !taken.has(id));
+    const n = await col.countDocuments({ category });
+    use = { _id: String(seed), category, photoId: free || ids[n % ids.length], mirror: !free };
+    await col.replaceOne({ _id: use._id }, use, { upsert: true });
+  }
+  let img = sharp(await cached(use.photoId)).rotate();
+  if (use.mirror) img = img.flop();
+  return img.resize(w, h, { fit: 'cover', position: 'attention' }).jpeg({ quality: 84 }).toBuffer();
+}
+
+// Pool category for a listing photo: by property type first, then by room tag / label.
+function categoryFor({ type, category, tag, label = '' }) {
+  if (category === 'land' || /plot|land/.test(type || '')) return 'land';
+  if (type === 'office' || type === 'coworking') return 'office';
+  if (type === 'shop' || type === 'showroom') return tag === 'exterior' || /front|street/i.test(label) ? 'shop_front' : 'shop_inside';
+  const t = tag || '';
+  if (['living', 'kitchen', 'bedroom', 'balcony', 'bathroom', 'garden'].includes(t)) return t;
+  const outside = () => (type === 'villa' ? 'villa' : ['independent_house', 'row_house'].includes(type) ? 'house_ext' : 'apartment_ext');
+  if (t === 'exterior' || /exterior|elevation|front|door|gate/i.test(label)) return outside();
+  if (/kitchen|pantry/i.test(label)) return 'kitchen';
+  if (/bed/i.test(label)) return 'bedroom';
+  if (/bath|toilet/i.test(label)) return 'bathroom';
+  if (/balcony|window|view/i.test(label)) return 'balcony';
+  if (/garden|park|lawn/i.test(label)) return 'garden';
+  if (/pool|gym|club|lobby|sports|deck/i.test(label)) return 'amenity';
+  return 'living';
+}
+
 // A 1280x960 (or w x h) JPEG: 8x8 tiles of random lightness in one hue, a label band in the middle.
-async function photo(label, seed, { w = 1280, h = 960, sub = '' } = {}) {
+// With `category`, a real pool photo (falls back to the generated one when offline).
+async function photo(label, seed, { w = 1280, h = 960, sub = '', category } = {}) {
+  if (category) {
+    try { return await poolPhoto(category, seed, { w, h }); } catch { /* offline: generated photo below */ }
+  }
   const r = rng(seed);
   const [cr, cg, cb] = PALETTES[Math.floor(r() * PALETTES.length)];
   const tw = w / 8; const th = h / 8;
@@ -66,4 +141,4 @@ const uploadPhoto = async (ownerId, purpose, label, seed, opts = {}) => upload(o
 const uploadPdf = async (ownerId, purpose, title, lines, seed) => upload(ownerId, purpose, await pdf(title, lines, seed), { name: `${title.replace(/\W+/g, '-').toLowerCase()}.pdf`, mime: 'application/pdf' });
 const uploadCsv = (ownerId, text, name = 'units.csv') => upload(ownerId, 'unit_csv', Buffer.from(text, 'utf8'), { name, mime: 'text/csv' });
 
-module.exports = { photo, pdf, upload, uploadPhoto, uploadPdf, uploadCsv };
+module.exports = { photo, pdf, upload, uploadPhoto, uploadPdf, uploadCsv, categoryFor, POOL };

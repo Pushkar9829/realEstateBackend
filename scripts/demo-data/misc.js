@@ -26,9 +26,9 @@ async function seedCms(ctx) {
   const sa = ctx.users.superadmin;
   await step('banners', async () => {
     if (await Banner.exists({ title: 'Diwali home festival' })) return 'skip';
-    const img = await media.uploadPhoto(sa._id, 'banner_image', 'Diwali home festival', 'banner:diwali', { w: 1600, h: 500, sub: 'Zero brokerage on verified homes' });
+    const img = await media.uploadPhoto(sa._id, 'banner_image', 'Diwali home festival', 'banner:diwali', { w: 1600, h: 500, sub: 'Zero brokerage on verified homes', category: 'villa' });
     await cms.banners.create({ title: 'Diwali home festival', imageFileId: String(img._id), imageUrl: img.url, link: '/search?city=pune&purpose=sale', cities: ['Pune'], startAt: daysAgo(5), endAt: daysAhead(25), active: true, sort: 1 }, fakeReq(sa));
-    const img2 = await media.uploadPhoto(sa._id, 'banner_image', 'New: Riverstone Greens', 'banner:greens', { w: 1600, h: 500, sub: 'Wakad, 2 and 3 BHK' });
+    const img2 = await media.uploadPhoto(sa._id, 'banner_image', 'New: Riverstone Greens', 'banner:greens', { w: 1600, h: 500, sub: 'Wakad, 2 and 3 BHK', category: 'apartment_ext' });
     await cms.banners.create({ title: 'New: Riverstone Greens', imageFileId: String(img2._id), imageUrl: img2.url, link: `/projects/${ctx.projects.greens && ctx.projects.greens.slug}`, cities: [], active: true, sort: 2 }, fakeReq(sa));
     await cms.banners.create({ title: 'Monsoon rentals (ended)', imageUrl: img2.url, link: '/search?purpose=rent', cities: ['Pune'], startAt: daysAgo(120), endAt: daysAgo(60), active: false, sort: 3 }, fakeReq(sa));
     return true;

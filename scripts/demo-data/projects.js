@@ -97,7 +97,7 @@ async function ensureProject(ctx, spec) {
   p = await Project.findById(id);
   if (!(p.media.photos || []).length) {
     for (const [i, label] of spec.photos.entries()) {
-      const f = await media.uploadPhoto(builder._id, 'project_media', label, `${spec.key}:photo:${i}`, { sub: spec.name });
+      const f = await media.uploadPhoto(builder._id, 'project_media', label, `${spec.key}:photo:${i}`, { sub: spec.name, category: projectPhotoCategory(label) });
       await projects.addMedia(builder, id, { kind: 'photo', fileId: String(f._id), caption: label });
     }
     if (spec.target === 'live' || spec.key === 'edge') {
@@ -175,4 +175,14 @@ async function seedProjects(ctx) {
   for (const spec of PROJECTS) ctx.projects[spec.key] = await Project.findOne({ name: spec.name });
 }
 
-module.exports = { seedProjects, PROJECTS };
+// Real pool photo category for a project photo label.
+function projectPhotoCategory(label) {
+  if (/site view/i.test(label)) return 'land';
+  if (/architect render/i.test(label)) return 'villa';
+  if (/living/i.test(label)) return 'living';
+  if (/garden|park/i.test(label)) return 'garden';
+  if (/club|pool|lobby|sports|gym/i.test(label)) return 'amenity';
+  return 'apartment_ext';
+}
+
+module.exports = { seedProjects, PROJECTS, projectPhotoCategory };

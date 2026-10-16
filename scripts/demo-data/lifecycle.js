@@ -30,7 +30,8 @@ async function photoSession(ctx, key, outcome) {
   const [lng, lat] = p.location.geo.coordinates;
   await verification.submitLocation(s.token, { lat: lat + 0.0002, lng: lng + 0.0001, accuracy: 12 });
   for (let i = 0; i < 4; i += 1) {
-    const buf = await media.photo(['Main door', 'Living room', 'Kitchen', 'Window view'][i], `${key}:live:${i}`, { w: 1024, h: 768, sub: 'Live capture' });
+    const label = ['Main door', 'Living room', 'Kitchen', 'Window view'][i];
+    const buf = await media.photo(label, `${key}:live:${i}`, { w: 1024, h: 768, sub: 'Live capture', category: media.categoryFor({ type: p.type, category: p.category, label }) });
     await verification.uploadPhoto(s.token, { buffer: buf, originalname: `live-${i}.jpg`, mimetype: 'image/jpeg', size: buf.length }, { lat: lat + 0.0002, lng: lng + 0.0001, accuracy: 15, capturedAt: new Date() });
   }
   await verification.submit(s.token, { addToGallery: outcome === 'approve_gallery' });
@@ -47,7 +48,7 @@ async function photoSession(ctx, key, outcome) {
 
 async function verificationPhotos(agent, key, n = 4) {
   const ids = [];
-  for (let i = 0; i < n; i += 1) ids.push(String((await media.uploadPhoto(agent._id, 'verification_photo', ['Gate', 'Hall', 'Bedroom', 'Kitchen'][i % 4], `${key}:vv:${i}`, { w: 1024, h: 768, sub: 'Field visit' }))._id));
+  for (let i = 0; i < n; i += 1) ids.push(String((await media.uploadPhoto(agent._id, 'verification_photo', ['Gate', 'Hall', 'Bedroom', 'Kitchen'][i % 4], `${key}:vv:${i}`, { w: 1024, h: 768, sub: 'Field visit', category: ['apartment_ext', 'living', 'bedroom', 'kitchen'][i % 4] }))._id));
   return ids;
 }
 
