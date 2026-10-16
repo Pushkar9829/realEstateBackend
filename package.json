@@ -11,6 +11,8 @@
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
     "seed": "node scripts/seed.js",
+    "seed:demo": "node scripts/seed-demo-data.js",
+    "demo:coverage": "node scripts/demo-coverage.js",
     "routes": "node scripts/print-routes.js",
     "test": "jest --runInBand"
   },
