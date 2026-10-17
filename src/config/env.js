@@ -62,6 +62,11 @@ const schema = z.object({
   MLM_PLATFORM_KEY: z.string().optional(),
   MLM_PLATFORM_SECRET: z.string().optional(),
 
+  // Demo / client-preview deployments only: every emailed or SMS one-time code is this
+  // fixed 6-digit value (e.g. 123456), so testers can log in without an SMS/email provider.
+  // Leave unset for a real launch. Authenticator-app (TOTP) codes are not affected.
+  DEMO_OTP_CODE: z.string().regex(/^\d{6}$/, 'must be 6 digits').optional().or(z.literal('').transform(() => undefined)),
+
   JOBS_ENABLED: flag('true'),
   JOBS_POLL_MS: z.coerce.number().default(5000),
   SEED_ADMIN_EMAIL: z.string().email().default('superadmin@example.com'),
@@ -81,6 +86,7 @@ env.isProd = env.NODE_ENV === 'production';
 env.isTest = env.NODE_ENV === 'test';
 env.corsOrigins = env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean);
 
+if (env.DEMO_OTP_CODE) console.warn('[env] DEMO_OTP_CODE is set: every one-time code is the fixed demo code. Remove it before a real launch.');
 if (env.isProd && env.STORAGE_PROVIDER === 'local') console.warn('[env] STORAGE_PROVIDER=local in production (Render disk is ephemeral)');
 
 module.exports = env;

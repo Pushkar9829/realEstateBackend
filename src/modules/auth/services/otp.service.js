@@ -5,6 +5,7 @@ const { Otp } = require('../models');
 const { ApiError } = require('../../../core/http');
 const { hashOtp, randomDigits, safeEqual } = require('../../../core/security/crypto');
 const settings = require('../../../core/settings');
+const env = require('../../../config/env');
 const { sendNow } = require('../../notifications/service');
 
 const PURPOSE_LABEL = {
@@ -45,7 +46,7 @@ async function issue({ userId, target, channel, purpose, fallbackEmail, totp = f
   if (!totp) await assertSendAllowed(target, purpose);
   await Otp.updateMany({ target, purpose, consumedAt: null, expiresAt: { $gt: new Date() } }, { $set: { expiresAt: new Date() } });
 
-  const code = totp ? null : randomDigits(6);
+  const code = totp ? null : (env.DEMO_OTP_CODE || randomDigits(6)); // DEMO_OTP_CODE: fixed code on demo deployments
   const otp = await Otp.create({
     userId, target, channel: channel === 'sms' ? 'sms' : 'email', purpose,
     codeHash: totp ? 'totp' : hashOtp(code, target),
