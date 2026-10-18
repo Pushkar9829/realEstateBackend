@@ -14,10 +14,11 @@ const { ApiError, paginate } = require('../../core/http');
 const { audit } = require('../../core/audit');
 const { assertTransition } = require('../../constants/status');
 const { notifyUser, notifyPermission } = require('../notifications/service');
+const { istDateTime } = require('../../core/format');
 
 const oid = z.string().regex(/^[a-f0-9]{24}$/);
 const OPEN = ['requested', 'scheduled'];
-const fmt = (d) => new Date(d).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+const fmt = (d) => istDateTime(d); // dd/mm/yyyy, h:mm am/pm (IST)
 const has = (u, p) => u.role === 'superadmin' || (u.permissions || []).includes(p);
 
 function move(v, to, by, note) {

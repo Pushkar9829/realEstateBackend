@@ -23,6 +23,7 @@ const { securityEvent, audit } = require('../../../core/audit');
 const events = require('../../../core/events');
 const settings = require('../../../core/settings');
 const env = require('../../../config/env');
+const { istDateTime } = require('../../../core/format');
 
 authenticator.options = { step: 30, window: 1 };
 const BCRYPT_COST = env.isTest ? 4 : 12; // spec: 10+ (lowered only in tests for speed)
@@ -166,7 +167,7 @@ async function registerFailedLogin(user, req) {
     user.lockedUntil = new Date(Date.now() + s['auth.lockoutMinutes'] * 60000);
     user.failedLogins = 0;
     await securityEvent(req, 'account.locked', { userId: user._id, meta: { until: user.lockedUntil } });
-    await notifyUser({ user, event: 'auth.locked', channels: ['email'], vars: { until: user.lockedUntil.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) } });
+    await notifyUser({ user, event: 'auth.locked', channels: ['email'], vars: { until: istDateTime(user.lockedUntil) } });
   }
   await user.save();
 }

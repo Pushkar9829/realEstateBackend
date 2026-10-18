@@ -11,6 +11,7 @@ const { ApiError, paginate } = require('../../core/http');
 const { audit } = require('../../core/audit');
 const { toPaise } = require('../../core/money');
 const { notifyUser } = require('../notifications/service');
+const { istDate } = require('../../core/format');
 
 const CHECKLIST = ['photos_genuine', 'details_match', 'ownership_proof_matches_kyc', 'no_contact_info', 'commission_ok', 'location_ok'];
 const BUILDER_CHECKLIST = ['rera_verified'];
@@ -145,7 +146,7 @@ async function decide(id, body, req) {
   if (d.proofOwnerName) await kyc.checkProofOwners(lister); // rule R1
   await audit(req, { action: `listing.${isRevision ? 'revision.' : ''}${d.decision}`, entityType: 'Property', entityId: p._id, reason: d.reason, before: { status: fromStatus }, after: { status: p.status } });
 
-  const vars = { listingNo: p.listingNo, title: p.title, propertyId: String(p._id), summary: (d.comments || []).map((c) => `${c.field}: ${c.comment}`).join('; '), reason: d.reason, expiresAt: p.expiresAt ? p.expiresAt.toDateString() : '' };
+  const vars = { listingNo: p.listingNo, title: p.title, propertyId: String(p._id), summary: (d.comments || []).map((c) => `${c.field}: ${c.comment}`).join('; '), reason: d.reason, expiresAt: p.expiresAt ? istDate(p.expiresAt) : '' };
   const event = { approve: 'listing.approved', changes: 'listing.changes_requested', reject: 'listing.rejected' }[d.decision];
   await notifyUser({ user: lister, event, channels: d.decision === 'approve' ? ['in_app', 'email', 'sms'] : ['in_app', 'email'], vars });
   return { status: p.status, liveAt: p.liveAt, expiresAt: p.expiresAt };

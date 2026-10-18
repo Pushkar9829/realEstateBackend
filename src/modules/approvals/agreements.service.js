@@ -13,6 +13,7 @@ const { sha256 } = require('../../core/security/crypto');
 const { audit } = require('../../core/audit');
 const { assertTransition } = require('../../constants/status');
 const { notifyUser } = require('../notifications/service');
+const { istDateTime } = require('../../core/format');
 
 const render = (text, vars) => text.replace(/\{\{(\w+)\}\}/g, (m, k) => (vars[k] !== undefined ? String(vars[k]) : m));
 
@@ -60,7 +61,7 @@ async function accept({ target, percent, typedName, lister, req, pending = false
     effectiveFrom: pending ? undefined : now,
   });
   await audit(req, { action: 'agreement.accept', entityType: 'Agreement', entityId: ag._id, after: { [key]: target.doc._id, percent, version: ag.version, pending } });
-  await notifyUser({ user: lister, event: 'agreement.accepted', channels: ['email'], vars: { agreementNo: ag.agreementNo, commissionPercent: percent.toFixed(2), propertyRef: target.ref, acceptedAt: now.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) } });
+  await notifyUser({ user: lister, event: 'agreement.accepted', channels: ['email'], vars: { agreementNo: ag.agreementNo, commissionPercent: percent.toFixed(2), propertyRef: target.ref, acceptedAt: istDateTime(now) } });
   return ag;
 }
 

@@ -8,6 +8,7 @@ const settings = require('../../core/settings');
 const env = require('../../config/env');
 const { notifyUser, notifyPermission, notifyLeadBuyer } = require('../notifications/service');
 const common = require('./common');
+const { istDateTime, istTime } = require('../../core/format');
 
 async function managersOf(teamId) {
   if (!teamId) return [];
@@ -85,7 +86,7 @@ async function visitReminder({ visitId, kind, scheduledAt }) {
   const v = await SiteVisit.findById(visitId).populate('propertyId', 'listingNo title listerId');
   if (!v || !['scheduled', 'confirmed'].includes(v.status)) return 'skipped';
   if (new Date(scheduledAt).getTime() !== v.scheduledAt.getTime()) return 'rescheduled'; // stale reminder
-  const when = v.scheduledAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+  const when = istDateTime(v.scheduledAt);
   const vars = { visitNo: v.visitNo, when, listingNo: v.propertyId.listingNo, meetingPoint: v.meetingPoint || 'At the property' };
   const lead = await Lead.findById(v.leadId);
   if (kind.startsWith('buyer') && lead) {
@@ -139,7 +140,7 @@ async function followupReminder({ followUpId }) {
   const f = await FollowUp.findById(followUpId).populate('leadId', 'leadNo');
   if (!f || f.status !== 'open') return 'skipped';
   const a = await User.findById(f.agentId);
-  if (a) await notifyUser({ user: a, event: 'followup.due', vars: { leadNo: f.leadId && f.leadId.leadNo, type: f.type, when: f.dueAt.toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' }) } });
+  if (a) await notifyUser({ user: a, event: 'followup.due', vars: { leadNo: f.leadId && f.leadId.leadNo, type: f.type, when: istTime(f.dueAt) } });
   return 'sent';
 }
 
@@ -163,7 +164,7 @@ async function outcomePending(now = new Date()) {
     .populate('propertyId', 'listingNo').limit(200);
   for (const v of rows) {
     const lead = await Lead.findById(v.leadId).select('leadNo teamId').lean();
-    const when = v.scheduledAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+    const when = istDateTime(v.scheduledAt);
     const vars = { visitNo: v.visitNo, when, listingNo: (v.propertyId && v.propertyId.listingNo) || '', leadNo: lead ? lead.leadNo : '', leadId: lead ? String(lead._id) : '' };
     const people = [...(v.agentId ? [await User.findById(v.agentId)] : []), ...await managersOf(lead && lead.teamId)].filter(Boolean);
     const seen = new Set();

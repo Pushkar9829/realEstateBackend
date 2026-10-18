@@ -5,6 +5,7 @@ const { User } = require('../auth/models');
 const settings = require('../../core/settings');
 const { ApiError } = require('../../core/http');
 const { notifyUser, notifyPermission } = require('../notifications/service');
+const { istDateTime } = require('../../core/format');
 
 const OPEN_STAGES = ['new', 'contacted', 'qualified', 'site_visit_scheduled', 'site_visit_done', 'negotiation', 'booking'];
 const STAGE_ORDER = ['new', 'contacted', 'qualified', 'site_visit_scheduled', 'site_visit_done', 'negotiation', 'booking', 'closed_won'];
@@ -94,7 +95,7 @@ async function assign(lead, agentId, by, { team, note, notifyOld = true } = {}) 
   if (lead.stage === 'new' && !lead.firstContactAt) lead.slaDueAt = await slaDue(new Date(), team);
   entry(lead, old ? 'reassigned' : 'assigned', by, { from: old, to: agentId, note });
   const agent = await User.findById(agentId);
-  if (agent) await notifyUser({ user: agent, event: old ? 'lead.reassigned' : 'lead.assigned', channels: ['in_app', 'email'], vars: { leadNo: lead.leadNo, leadId: String(lead._id), dueAt: lead.slaDueAt ? lead.slaDueAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '' } });
+  if (agent) await notifyUser({ user: agent, event: old ? 'lead.reassigned' : 'lead.assigned', channels: ['in_app', 'email'], vars: { leadNo: lead.leadNo, leadId: String(lead._id), dueAt: lead.slaDueAt ? istDateTime(lead.slaDueAt) : '' } });
   if (old && notifyOld && String(old) !== String(agentId)) {
     const prev = await User.findById(old);
     if (prev) await notifyUser({ user: prev, event: 'lead.reassigned', vars: { leadNo: lead.leadNo, leadId: String(lead._id), dueAt: '' } });

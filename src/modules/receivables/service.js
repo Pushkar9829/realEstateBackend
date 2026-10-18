@@ -19,6 +19,7 @@ const { ApiError, paginate } = require('../../core/http');
 const { audit } = require('../../core/audit');
 const { notifyUser, notifyPermission } = require('../notifications/service');
 const reveal = require('../masking/reveal.service');
+const { istDate, paiseNumber } = require('../../core/format');
 
 const oid = z.string().regex(/^[a-f0-9]{24}$/);
 const OPEN = ['pending_invoice', 'invoiced', 'overdue', 'partially_paid'];
@@ -26,7 +27,7 @@ const COLLECTING = ['invoiced', 'overdue', 'partially_paid'];
 const DAY = 86400000;
 const inr = (paise) => toRupees(paise || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const field = (path, message) => ApiError.validation([{ in: 'body', path, message }]);
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }) : '');
+const fmtDate = (d) => istDate(d); // dd/mm/yyyy, as in the web app
 const istDay = (d) => Math.floor((new Date(d).getTime() + 330 * 60000) / DAY);
 
 // ---------------------------------------------------------------- figures
@@ -247,7 +248,7 @@ async function issue(user, invoiceId, body, req) {
   const { r, inv } = out;
   if (await settings.get('invoice.eInvoicingEnabled')) r.timeline.push({ type: 'einvoice', at: new Date(), note: 'IRN request pending (integration not configured)' });
   const lister = await User.findById(r.listerId);
-  if (lister) await notifyUser({ user: lister, event: 'invoice.issued', vars: { invoiceNo: inv.invoiceNo, invoiceId: String(inv._id), total: inr(inv.total), dueDate: fmtDate(inv.dueDate), link: `/lister/invoices/${inv._id}` }, channels: ['in_app', 'email'] });
+  if (lister) await notifyUser({ user: lister, event: 'invoice.issued', vars: { invoiceNo: inv.invoiceNo, invoiceId: String(inv._id), total: paiseNumber(inv.total), dueDate: istDate(inv.dueDate), link: `/lister/invoices/${inv._id}` }, channels: ['in_app', 'email'] });
   events.emit(events.EVENTS.INVOICE_ISSUED, { receivableId: r._id, invoiceNo: inv.invoiceNo });
   return { receivableId: r._id, status: r.status, invoice: inv, ...figures(r) };
 }
@@ -334,7 +335,7 @@ function applyPayment(r, amount, tds, by) {
 
 async function paymentReceipt(r, amount) {
   const lister = await User.findById(r.listerId);
-  if (lister) await notifyUser({ user: lister, event: 'payment.confirmed', vars: { amount: inr(amount), receivableNo: r.receivableNo, outstanding: inr(outstanding(r)) }, channels: ['in_app', 'email'] });
+  if (lister) await notifyUser({ user: lister, event: 'payment.confirmed', vars: { amount: paiseNumber(amount), receivableNo: r.receivableNo, outstanding: paiseNumber(outstanding(r)) }, channels: ['in_app', 'email'] });
   events.emit(events.EVENTS.PAYMENT_CONFIRMED, { receivableId: r._id, amount });
 }
 
@@ -450,7 +451,7 @@ async function sendReminder(r, when, kind) {
   if (!inv) return false;
   const lister = await User.findById(r.listerId);
   if (!lister) return false;
-  await notifyUser({ user: lister, event: 'invoice.reminder', vars: { invoiceNo: inv.invoiceNo, outstanding: inr(collectible(r)), dueDate: fmtDate(inv.dueDate), when, link: `/lister/invoices/${inv._id}` }, channels: ['email', 'sms'] });
+  await notifyUser({ user: lister, event: 'invoice.reminder', vars: { invoiceNo: inv.invoiceNo, outstanding: paiseNumber(collectible(r)), dueDate: istDate(inv.dueDate), when, link: `/lister/invoices/${inv._id}` }, channels: ['email', 'sms'] });
   r.remindersSent.push({ kind, at: new Date() });
   return true;
 }
@@ -557,7 +558,7 @@ async function uploadProof(user, invoiceId, body, req) {
   r.timeline.push({ type: 'proof', by: user._id, at: new Date(), note: `INR ${inr(toPaise(d.amount))} for ${inv.invoiceNo}` });
   await Promise.all([r.save(), file.save()]);
   await audit(req, { action: 'receivable.proof.upload', entityType: 'Receivable', entityId: r._id, after: { amount: toPaise(d.amount) } });
-  await notifyPermission('receivables.manage', 'payment.proof_submitted', { receivableNo: r.receivableNo, receivableId: String(r._id), amount: inr(toPaise(d.amount)) });
+  await notifyPermission('receivables.manage', 'payment.proof_submitted', { receivableNo: r.receivableNo, receivableId: String(r._id), amount: paiseNumber(toPaise(d.amount)) });
   const p = r.payments[r.payments.length - 1];
   return { _id: p._id, status: p.status, amount: p.amount };
 }

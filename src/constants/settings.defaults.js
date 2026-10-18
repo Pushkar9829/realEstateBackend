@@ -157,7 +157,7 @@ module.exports = {
   "consent.cookieDays": S(180, "settings.manage", "Remember the visitor's choice"),
   "analytics.ga4MeasurementId": S("", "settings.manage", "GA4 ID; empty disables analytics"),
   "auth.allowInternationalPhones": S(true, "settings.manage", "Accept E.164 numbers with email OTP"),
-  "i18n.languages": S(["en","hi"], "settings.manage", "UI languages (Hindi delivered in M7)"),
+  "i18n.languages": S(["en","hi"], "settings.manage", "Interface languages"),
   "projects.bulkUploadMaxRows": S(2000, "settings.manage", "Rows per unit CSV"),
   "general.helpdeskUrl": S("", "settings.manage", "Help link to the external helpdesk"),
   "general.helpdeskEmail": S("", "settings.manage", "Helpdesk mailbox for complaints"),

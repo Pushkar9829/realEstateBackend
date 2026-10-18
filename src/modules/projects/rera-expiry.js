@@ -15,7 +15,7 @@ const { notifyUser, notifyPermission } = require('../notifications/service');
 const AGENT_REMINDER_DAYS = [30, 7];
 const PROJECT_WARN_DAYS = 30;
 const PROJECT_STATUSES = ['live', 'sold_out', 'pending_approval', 'changes_requested'];
-const fmtDate = (d) => new Date(d).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' });
+const { istDate: fmtDate } = require('../../core/format'); // dd/mm/yyyy, as in the web app
 
 // Whole IST calendar days from `now` to `date` (0 = today, negative = past).
 function daysUntil(date, now = new Date()) {

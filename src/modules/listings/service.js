@@ -19,6 +19,7 @@ const { sha256 } = require('../../core/security/crypto');
 const { assertTransition } = require('../../constants/status');
 const { notifyUser, notifyPermission } = require('../notifications/service');
 const env = require('../../config/env');
+const { istDate } = require('../../core/format');
 
 const FILE_PURPOSE = { photo: 'property_photo', floor_plan: 'floor_plan', brochure: 'brochure', video: 'property_video', ownership_proof: 'ownership_proof' };
 const OPEN = ['live', 'paused', 'pending_approval', 'changes_requested'];
@@ -26,7 +27,7 @@ const EDITABLE = ['draft', 'changes_requested', 'pending_approval'];
 const REVISABLE = ['live', 'paused'];
 const slugify = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
 const daysMs = (d) => d * 86400000;
-const fmtDate = (d) => new Date(d).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' });
+const fmtDate = (d) => istDate(d); // dd/mm/yyyy, as in the web app
 
 function setStatus(p, to, actor, note) {
   assertTransition('listing', p.status, to);

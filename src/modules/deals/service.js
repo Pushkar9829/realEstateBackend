@@ -7,6 +7,7 @@
 const mongoose = require('mongoose');
 const { z } = require('zod');
 const { Deal } = require('./models');
+const { paiseNumber } = require('../../core/format');
 const { Lead, SiteVisit, Offer } = require('../leads/models');
 const { Property } = require('../listings/models');
 const { Project } = require('../projects/models');
@@ -33,7 +34,7 @@ const LOCK_MS = 30 * 60000;
 const MAX_RESUBMISSIONS = 5;
 const DOC_LIMITS = { receipt: 10, agreement: 5, other: 10 };
 const DOC_PURPOSE = { receipt: ['receipt'], agreement: ['agreement_doc', 'signed_agreement'], other: ['receipt', 'agreement_doc', 'signed_agreement'] };
-const inr = (paise) => toRupees(paise || 0).toLocaleString('en-IN');
+const inr = (paise) => paiseNumber(paise || 0); // 3,31,934 (shared server format)
 const field = (path, message) => ApiError.validation([{ in: 'body', path, message }]);
 
 // ---------------------------------------------------------------- validation

@@ -19,6 +19,7 @@ const jobs = require('../../core/jobs');
 const notify = require('../../core/notify');
 const settings = require('../../core/settings');
 const logger = require('../../core/logger');
+const { istDateTime } = require('../../core/format');
 
 const render = (text, vars) => String(text || '').replace(/\{\{(\w+)\}\}/g, (m, k) => (vars[k] !== undefined ? String(vars[k]) : ''));
 
@@ -42,7 +43,7 @@ async function template(event, channel) {
 }
 
 async function baseVars(vars) {
-  return { siteName: await settings.get('general.companyName'), time: new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }), ...vars };
+  return { siteName: await settings.get('general.companyName'), time: istDateTime(new Date()), ...vars };
 }
 
 // Milliseconds until the quiet window ends, or 0 when outside it (IST).

@@ -20,6 +20,7 @@ const common = require('./common');
 const slots = require('./slots.service');
 const buyerSvc = require('./buyer.service');
 const { sendWhatsapp } = require('./whatsapp.send');
+const { istDate, istDateTime, rupeeText } = require('../../core/format');
 
 const oid = z.string().regex(/^[a-f0-9]{24}$/);
 const escRx = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -247,7 +248,7 @@ async function whatsappTemplate(user, id, body) {
       : await SiteVisit.findOne({ leadId: lead._id, status: { $in: ['scheduled', 'confirmed'] }, scheduledAt: { $gte: new Date() } }).sort({ scheduledAt: 1 }).lean();
     if (!v || !['scheduled', 'confirmed'].includes(v.status)) throw ApiError.validation([{ in: 'body', path: 'visitId', message: 'Choose a scheduled visit' }]);
     const p = await Property.findById(v.propertyId).select('listingNo').lean();
-    Object.assign(vars, { visitNo: v.visitNo, listingNo: p ? p.listingNo : '', meetingPoint: v.meetingPoint || 'At the property', when: new Date(v.scheduledAt).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) });
+    Object.assign(vars, { visitNo: v.visitNo, listingNo: p ? p.listingNo : '', meetingPoint: v.meetingPoint || 'At the property', when: istDateTime(v.scheduledAt) });
     data.visitNo = v.visitNo;
   }
   const { template, render } = require('../notifications/service');
@@ -467,7 +468,7 @@ async function notifyScheduled(v, lead, p, event, { reason } = {}) {
   const token = crypto.randomBytes(18).toString('base64url');
   v.confirmTokenHash = buyerSvc.sha(token);
   await v.save();
-  const when = v.scheduledAt.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' });
+  const when = istDateTime(v.scheduledAt);
   const agent = await User.findById(v.agentId).select('name').lean();
   const vars = { visitNo: v.visitNo, when, meetingPoint: v.meetingPoint || 'At the property', note: v.buyerNote ? ` Note: ${v.buyerNote}.` : '', agent: agent ? agent.name.split(' ')[0] : 'our agent', link: `${env.CLIENT_URL}/visit/${token}`, listingNo: p.listingNo };
   await notifyLeadBuyer(lead, { event, channels: ['in_app', 'email', 'sms'], vars }); // WhatsApp when opted in (RE-K-08)
@@ -675,7 +676,7 @@ async function recordOffer(user, id, body) {
   await lead.save();
   await Property.updateOne({ _id: propertyId }, { $inc: { 'stats.offers': 1 } });
   const lister = await User.findById(p.listerId);
-  if (lister) await notifyUser({ user: lister, event: 'offer.received', channels: ['in_app', 'email', 'sms'], vars: { offerNo: o.offerNo, listingNo: p.listingNo, buyerLabel: o.buyerLabel, amount: `INR ${d.amount.toLocaleString('en-IN')}`, by: o.validUntil.toDateString() } });
+  if (lister) await notifyUser({ user: lister, event: 'offer.received', channels: ['in_app', 'email', 'sms'], vars: { offerNo: o.offerNo, listingNo: p.listingNo, buyerLabel: o.buyerLabel, amount: rupeeText(d.amount), by: istDate(o.validUntil) } });
   return o;
 }
 
