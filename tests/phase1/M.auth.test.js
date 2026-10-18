@@ -178,6 +178,99 @@ describe('[M][public] RE-M-04 Tokens and sessions', () => {
     expect([x.status, y.status].sort()).toEqual([200, 401]);
   });
 
+  // Final fix round: the grace window must never fork a session.
+  const refresh = (token, ua) => {
+    const r = request(app).post('/api/auth/refresh');
+    if (ua) r.set('User-Agent', ua);
+    return r.send({ refreshToken: token });
+  };
+  const familyOf = async (token) => (await RefreshToken.findOne({ tokenHash: sha256(token) })).familyId;
+  const liveCount = (familyId) => RefreshToken.countDocuments({ familyId, revokedAt: null, expiresAt: { $gt: new Date() } });
+  const usable = async (token) => Boolean(await RefreshToken.exists({ tokenHash: sha256(token), revokedAt: null }));
+
+  test('grace reuse supersedes the earlier successor: never two usable refresh tokens in one family', async () => {
+    const acct = await h.registerActive(app, 'buyer');
+    const t = await h.loginFull(app, acct.email, acct.password);
+    const fam = await familyOf(t.refreshToken);
+    expect(await liveCount(fam)).toBe(1);
+    const r1 = await refresh(t.refreshToken); // the response is lost by a reload
+    expect(r1.status).toBe(200);
+    expect(await liveCount(fam)).toBe(1);
+    const retry = await refresh(t.refreshToken); // grace
+    expect(retry.status).toBe(200);
+    expect(await liveCount(fam)).toBe(1);
+    expect(await usable(r1.body.data.refreshToken)).toBe(false);
+    expect(await usable(retry.body.data.refreshToken)).toBe(true);
+    expect(await SecurityEvent.exists({ type: 'token.reuse_grace', 'meta.familyId': fam })).toBeTruthy();
+    // the superseded successor (the other tab) fails, but the family survives
+    const stale = await refresh(r1.body.data.refreshToken);
+    expect(stale.status).toBe(401);
+    expect(stale.body.error.code).toBe('REFRESH_SUPERSEDED');
+    expect(await SecurityEvent.exists({ type: 'token.superseded_reuse', 'meta.familyId': fam })).toBeTruthy();
+    expect(await liveCount(fam)).toBe(1);
+    const next = await refresh(retry.body.data.refreshToken);
+    expect(next.status).toBe(200);
+    expect(await liveCount(fam)).toBe(1);
+    // the superseded token never gets a grace of its own
+    expect((await refresh(r1.body.data.refreshToken)).status).toBe(401);
+    expect(await liveCount(fam)).toBe(1);
+  });
+
+  test('replay after the grace is used, or from another device, revokes the family', async () => {
+    const acct = await h.registerActive(app, 'buyer');
+    // (a) second reuse of the same previous token
+    const a = await h.loginFull(app, acct.email, acct.password);
+    const famA = await familyOf(a.refreshToken);
+    await refresh(a.refreshToken).expect(200);
+    const g = await refresh(a.refreshToken).expect(200);
+    expect((await refresh(a.refreshToken)).status).toBe(401);
+    expect(await liveCount(famA)).toBe(0);
+    expect((await refresh(g.body.data.refreshToken)).status).toBe(401);
+    expect(await SecurityEvent.exists({ type: 'token.reuse_detected', 'meta.familyId': famA })).toBeTruthy();
+    // (b) a stolen previous token replayed inside 30 s from another browser
+    const b = await h.loginFull(app, acct.email, acct.password);
+    const famB = await familyOf(b.refreshToken);
+    const b1 = await refresh(b.refreshToken).expect(200);
+    expect((await refresh(b.refreshToken, 'Attacker/1.0')).status).toBe(401);
+    expect(await liveCount(famB)).toBe(0);
+    expect((await refresh(b1.body.data.refreshToken)).status).toBe(401);
+    // (c) a superseded token replayed from another browser
+    const c = await h.loginFull(app, acct.email, acct.password);
+    const famC = await familyOf(c.refreshToken);
+    const c1 = await refresh(c.refreshToken).expect(200);
+    await refresh(c.refreshToken).expect(200);
+    expect((await refresh(c1.body.data.refreshToken, 'Attacker/1.0')).status).toBe(401);
+    expect(await liveCount(famC)).toBe(0);
+    // (d) a superseded token presented after the window
+    const d = await h.loginFull(app, acct.email, acct.password);
+    const famD = await familyOf(d.refreshToken);
+    const d1 = await refresh(d.refreshToken).expect(200);
+    await refresh(d.refreshToken).expect(200);
+    await RefreshToken.updateOne({ tokenHash: sha256(d1.body.data.refreshToken) }, { $set: { supersededAt: new Date(Date.now() - 31000) } });
+    expect((await refresh(d1.body.data.refreshToken)).status).toBe(401);
+    expect(await liveCount(famD)).toBe(0);
+  });
+
+  test('two tabs refreshing the same live token together end with exactly one valid session', async () => {
+    const acct = await h.registerActive(app, 'buyer');
+    for (let i = 0; i < 4; i += 1) {
+      const t = await h.loginFull(app, acct.email, acct.password);
+      const fam = await familyOf(t.refreshToken);
+      const [x, y] = await Promise.all([refresh(t.refreshToken), refresh(t.refreshToken)]);
+      expect([x.status, y.status]).toEqual([200, 200]);
+      expect(await liveCount(fam)).toBe(1);
+      const tokens = [x.body.data.refreshToken, y.body.data.refreshToken];
+      const live = [];
+      for (const tok of tokens) if (await usable(tok)) live.push(tok);
+      expect(live).toHaveLength(1);
+      const stale = tokens.find((tok) => tok !== live[0]);
+      expect((await refresh(stale)).body.error.code).toBe('REFRESH_SUPERSEDED');
+      expect((await refresh(live[0])).status).toBe(200);
+      expect(await liveCount(fam)).toBe(1);
+      await request(app).post('/api/auth/logout-all').set(h.bearer(x.body.data.accessToken)).expect(200);
+    }
+  });
+
   test('sessions list marks the current one; logout-all revokes everything', async () => {
     const acct = await h.registerActive(app, 'buyer');
     const a = await h.loginFull(app, acct.email, acct.password);

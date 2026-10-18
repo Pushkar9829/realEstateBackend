@@ -113,6 +113,8 @@ const refreshTokenSchema = new mongoose.Schema({
   revokedAt: Date,
   replacedBy: String,
   graceUsedAt: { type: Date, default: null }, // the one reuse allowed within the grace window (session.service)
+  graceDoneAt: Date, // the grace replacement was issued (a concurrent duplicate before this is benign)
+  supersededAt: Date, // revoked because a grace reuse of its parent took over the chain (session.service)
   ip: String,
   ua: String,
   lastUsedAt: Date,
