@@ -43,6 +43,9 @@ function createApp() {
 
   app.use('/api', limits.global);
 
+  // Control Center adapter: no-op unless CC_KEY_ID and CC_SECRET are set (raw-body routes, before the JSON parser).
+  require('./modules/control').mount(app);
+
   // Provider webhooks need the raw body, so they mount before the JSON parser.
   app.use(PANELS.integrations.mount, buildPanel('integrations'));
 

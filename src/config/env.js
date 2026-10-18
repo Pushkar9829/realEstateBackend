@@ -62,6 +62,16 @@ const schema = z.object({
   MLM_PLATFORM_KEY: z.string().optional(),
   MLM_PLATFORM_SECRET: z.string().optional(),
 
+  // Control Center adapter (control-center/docs/CC_CONTRACT.md). OFF unless CC_KEY_ID and CC_SECRET are set.
+  CC_KEY_ID: z.string().optional().or(z.literal('').transform(() => undefined)),
+  CC_SECRET: z.string().min(32).optional().or(z.literal('').transform(() => undefined)),
+  CC_SECRET_PREVIOUS: z.string().optional(),
+  CC_ALLOWED_SCOPES: z.string().optional(), // comma list; default ops.read
+  CC_JWKS_URL: z.string().url().optional().or(z.literal('').transform(() => undefined)), // SSO is off without it
+  CC_ISSUER: z.string().optional(),
+  CC_AUDIENCE: z.string().optional(),
+  CC_SSO_ROLES: z.string().optional(), // comma list; default superadmin,admin
+
   // Demo / client-preview deployments only: every emailed or SMS one-time code is this
   // fixed 6-digit value (e.g. 123456), so testers can log in without an SMS/email provider.
   // Leave unset for a real launch. Authenticator-app (TOTP) codes are not affected.

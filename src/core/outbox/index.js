@@ -73,6 +73,7 @@ async function deliver(doc, { enabled, sendUnreferred }) {
 
 // Called by the job worker on a schedule (see src/jobs.js).
 async function dispatchDue(settings) {
+  if (await require('../../modules/control').paused('hub_delivery')) return; // kill switch from the Control Center
   const due = await Outbox.find({ status: 'pending', nextAttemptAt: { $lte: new Date() } }).sort({ createdAt: 1 }).limit(50);
   for (const doc of due) {
     try { await deliver(doc, settings); } catch (err) { logger.error({ err, eventId: doc.eventId }, 'Outbox delivery error'); }
