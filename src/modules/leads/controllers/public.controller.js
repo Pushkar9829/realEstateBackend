@@ -3,6 +3,7 @@
 const { asyncHandler, ok } = require('../../../core/http');
 const capture = require('../capture.service');
 const buyer = require('../buyer.service');
+const brochures = require('../brochure.service');
 
 const run = (fn, status = 200) => asyncHandler(async (req, res) => (status === 201 ? res.status(201).json({ success: true, data: await fn(req) }) : ok(res, await fn(req))));
 
@@ -11,6 +12,8 @@ module.exports = {
   verifyOtpOtptoken: run((req) => capture.verifyOtp(req.body)),
   createOrMergeLead: run((req) => capture.enquiry(req.body, req), 201),
   contactFormLead: run((req) => capture.contactForm(req.body, req), 201),
+  propertyBrochure: run((req) => brochures.brochure('property', req.params.slug, req)),
+  projectBrochure: run((req) => brochures.brochure('project', req.params.slug, req)),
   ownLeads: run((req) => buyer.myEnquiries(req.user)),
   ownLeadDetailSimplified: run((req) => buyer.myEnquiry(req.user, req.params.id)),
   confirmVisit: run((req) => buyer.meConfirm(req.user, req.params.id)),

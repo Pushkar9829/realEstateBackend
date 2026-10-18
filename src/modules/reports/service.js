@@ -52,16 +52,35 @@ async function agentIdsFor(teams) {
 
 // ---------------------------------------------------------------- reports
 
+// RE-J-07 manager scoping for listings: a listing has no team, so a manager
+// sees the listings inside the territories (cities, localities) of the teams
+// they manage. No team or no territory -> nothing.
+const exact = (s) => new RegExp(`^${String(s).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+async function listingScope(user) {
+  const teams = await teamScope(user);
+  if (!teams) return {};
+  const rows = await Team.find({ _id: { $in: teams } }).select('territories').lean();
+  const cities = [...new Set(rows.flatMap((t) => (t.territories && t.territories.cities) || []).filter(Boolean))];
+  const localities = [...new Set(rows.flatMap((t) => (t.territories && t.territories.localities) || []).filter(Boolean))];
+  const or = [
+    ...(cities.length ? [{ 'location.city': { $in: cities.map(exact) } }] : []),
+    ...(localities.length ? [{ 'location.locality': { $in: localities.map(exact) } }] : []),
+  ];
+  return or.length ? { $or: or } : { _id: null };
+}
+
 async function listingsReport(user, r) {
-  const created = { createdAt: { $gte: r.from, $lte: r.to }, deletedAt: null };
+  const scope = await listingScope(user);
+  const created = { createdAt: { $gte: r.from, $lte: r.to }, deletedAt: null, ...scope };
   const [byStatus, byCity, byType, turnaround] = await Promise.all([
-    Property.aggregate([{ $match: { deletedAt: null } }, { $group: { _id: '$status', count: { $sum: 1 } } }, { $sort: { count: -1 } }]),
+    Property.aggregate([{ $match: { deletedAt: null, ...scope } }, { $group: { _id: '$status', count: { $sum: 1 } } }, { $sort: { count: -1 } }]),
     Property.aggregate([{ $match: created }, { $group: { _id: '$location.city', count: { $sum: 1 }, live: { $sum: { $cond: [{ $eq: ['$status', 'live'] }, 1, 0] } } } }, { $sort: { count: -1 } }]),
     Property.aggregate([{ $match: created }, { $group: { _id: { purpose: '$purpose', type: '$type' }, count: { $sum: 1 } } }, { $sort: { count: -1 } }]),
-    Property.aggregate([{ $match: { liveAt: { $gte: r.from, $lte: r.to }, submittedAt: { $ne: null } } }, { $project: { h: { $divide: [{ $subtract: ['$liveAt', '$submittedAt'] }, 3600000] } } }, { $group: { _id: null, avgHours: { $avg: '$h' }, maxHours: { $max: '$h' }, n: { $sum: 1 } } }]),
+    Property.aggregate([{ $match: { liveAt: { $gte: r.from, $lte: r.to }, submittedAt: { $ne: null }, ...scope } }, { $project: { h: { $divide: [{ $subtract: ['$liveAt', '$submittedAt'] }, 3600000] } } }, { $group: { _id: null, avgHours: { $avg: '$h' }, maxHours: { $max: '$h' }, n: { $sum: 1 } } }]),
   ]);
   const t = turnaround[0] || { avgHours: 0, maxHours: 0, n: 0 };
   return {
+    scope: Object.keys(scope).length ? 'team_territories' : 'all',
     summary: { approved: t.n, avgApprovalHours: Math.round(t.avgHours * 10) / 10, maxApprovalHours: Math.round(t.maxHours * 10) / 10, slaHours: await settings.get('listing.reviewSlaHours').catch(() => 24) },
     byStatus: byStatus.map((x) => ({ status: x._id, count: x.count })),
     byCity: byCity.map((x) => ({ city: x._id || 'Unknown', count: x.count, live: x.live })),
@@ -437,13 +456,16 @@ async function listingStats(user, id, query) {
   // Locality comparison (RE-E-17): average live price per sqft in the same locality and purpose.
   const peers = await Property.aggregate([{ $match: { status: 'live', purpose: p.purpose, 'location.localityId': p.location && p.location.localityId, _id: { $ne: p._id } } }, { $group: { _id: null, ppsf: { $avg: '$price.pricePerSqft' }, views: { $avg: '$stats.views' }, n: { $sum: 1 } } }]);
   const peer = peers[0];
+  // stats.smallCountMasking (RE-B-09): counts of 1 or 2 leave the API as '<3' for listers.
+  const mask = await settings.get('stats.smallCountMasking').catch(() => true);
+  const shown = (n) => (mask && n > 0 && n < 3 ? '<3' : n);
   return {
     listingNo: p.listingNo, title: p.title, status: p.status, from: r.from, to: r.to,
     // counters: lifetime totals since the listing went live; rangeCounters: the chosen from..to.
     rangeCounters: { views: views.reduce((a, x) => a + x.views, 0), enquiries: rEnquiries, visits: rVisitRequests, visitsDone: rVisitsDone, offersReceived: rOffers, shortlists: rShortlists },
     counters: { ...(p.stats || {}), visitsDone: visits, offersReceived: offers, avgInterest: feedback.length >= 3 ? Math.round((feedback.reduce((a, x) => a + x.feedback.interest, 0) / feedback.length) * 10) / 10 : null },
     viewsPerDay: views.map((x) => ({ day: x._id, views: x.views })),
-    funnel: leadCommon.STAGE_ORDER.concat('closed_lost').map((s) => ({ stage: s, count: (stages.find((x) => x._id === s) || {}).count || 0 })),
+    funnel: leadCommon.STAGE_ORDER.concat('closed_lost').map((s) => ({ stage: s, count: shown((stages.find((x) => x._id === s) || {}).count || 0) })),
     locality: peer && peer.n >= 3 ? { listings: peer.n, avgPricePerSqft: Math.round(peer.ppsf), yourPricePerSqft: p.price && p.price.pricePerSqft, avgViews: Math.round(peer.views) } : null,
   };
 }

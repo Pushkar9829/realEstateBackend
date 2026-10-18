@@ -35,6 +35,12 @@ const exportJobSchema = new mongoose.Schema({
   error: String,
   expiresAt: Date, // download link valid 24 h
 }, { timestamps: true });
+// expireExports() removes the file once the link expires (status -> expired);
+// the job record itself is purged 30 days later, failed jobs after 30 days.
+exportJobSchema.index({ status: 1, expiresAt: 1 });
+exportJobSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 30 * 24 * 3600 });
+exportJobSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 3600, partialFilterExpression: { status: 'failed' } });
+exportJobSchema.index({ requestedBy: 1, createdAt: -1 });
 
 module.exports = {
   ContactReveal: mongoose.model('ContactReveal', contactRevealSchema),

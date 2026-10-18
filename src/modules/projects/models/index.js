@@ -78,6 +78,9 @@ const unitImportSchema = new mongoose.Schema({
   status: { type: String, enum: ['previewed', 'confirmed', 'discarded'], default: 'previewed' },
   by: ObjectId,
 }, { timestamps: true });
+unitImportSchema.index({ projectId: 1, createdAt: -1 });
+// A preview that was never confirmed or discarded is dropped after 30 days.
+unitImportSchema.index({ createdAt: 1 }, { expireAfterSeconds: 30 * 24 * 3600, partialFilterExpression: { status: 'previewed' } });
 
 module.exports = {
   Project: mongoose.model('Project', projectSchema),

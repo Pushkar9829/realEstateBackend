@@ -72,6 +72,26 @@ describe('[O][admin] RE-O-02/03 Reports', () => {
     expect(all.body.data.summary.total).toBe(5);
   });
 
+  test('RE-J-07: the listings report for a manager covers only the territories of their teams', async () => {
+    const M = h.bearer(manager.token);
+    const total = (r) => r.body.data.byStatus.reduce((a, x) => a + x.count, 0);
+    const admin = await request(app).get('/api/admin/reports/listings').set(A).expect(200);
+    expect(admin.body.data.scope).toBe('all');
+    expect(total(admin)).toBeGreaterThan(0);
+    // team A has no territory yet: nothing is in scope
+    const none = await request(app).get('/api/admin/reports/listings').set(M).expect(200);
+    expect(none.body.data.scope).toBe('team_territories');
+    expect(total(none)).toBe(0);
+    // a territory elsewhere still shows nothing; the listing's own city shows it
+    await Team.updateOne({ _id: teamA._id }, { $set: { 'territories.cities': ['Nowhere City'] } });
+    expect(total(await request(app).get('/api/admin/reports/listings').set(M).expect(200))).toBe(0);
+    await Team.updateOne({ _id: teamA._id }, { $set: { 'territories.cities': [String(p.location.city).toUpperCase()] } });
+    const mine = await request(app).get('/api/admin/reports/listings').set(M).expect(200);
+    expect(total(mine)).toBeGreaterThan(0);
+    expect(mine.body.data.byCity.every((x) => x.city.toLowerCase() === String(p.location.city).toLowerCase())).toBe(true);
+    await Team.updateOne({ _id: teamA._id }, { $unset: { territories: 1 } });
+  });
+
   test('funnel, SLA, commission, listings and ageing reports; unknown key is 404', async () => {
     const funnel = await request(app).get('/api/admin/reports/funnel').set(A).expect(200);
     expect(funnel.body.data.rows[0]).toMatchObject({ stage: 'new', leads: 5 });

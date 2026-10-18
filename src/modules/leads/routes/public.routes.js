@@ -8,6 +8,8 @@ router.post('/leads/otp', c.sendGuestOtp); // public: Send guest OTP
 router.post('/leads/otp/verify', c.verifyOtpOtptoken); // public: Verify OTP -> otpToken
 router.post('/leads/enquiry', ...g.optional, c.createOrMergeLead); // public, buyer: Create or merge lead
 router.post('/contact', c.contactFormLead); // public: Contact form lead
+router.get('/properties/:slug/brochure', ...g.optional, c.propertyBrochure); // public, buyer: Brochure (after an enquiry when gated)
+router.get('/projects/:slug/brochure', ...g.optional, c.projectBrochure); // public, buyer: Brochure (after an enquiry when gated)
 router.get('/me/enquiries', ...g.buyer, c.ownLeads); // buyer: Own leads
 router.get('/me/enquiries/:id', ...g.buyer, c.ownLeadDetailSimplified); // buyer: Own lead detail (simplified)
 router.post('/me/site-visits/:id/confirm', ...g.buyer, c.confirmVisit); // buyer: Confirm visit

@@ -168,6 +168,8 @@ async function detail(user, id) {
     FollowUp.findOne({ leadId: l._id, status: 'open' }).sort({ dueAt: 1 }).select('type dueAt note').lean(),
     visitPhotoUrls(visits), settings.get('whatsapp.enabled'),
   ]);
+  // Masked calls (RE-C-22) need a telephony provider; the UI hides the button without one.
+  const maskedCallAvailable = env.TELEPHONY_PROVIDER !== 'none' && Boolean(await settings.get('telephony.enabled').catch(() => false));
   const waOptIn = waEnabled ? await buyerWhatsappOptIn(l) : false;
   return {
     ...leadRow(l), buyer: { name: l.buyer.name, phone: maskPhone(l.buyer.phone), hasEmail: Boolean(l.buyer.email) }, referralCode: l.referralCode,
@@ -179,6 +181,7 @@ async function detail(user, id) {
     deal, agent: l.assignedTo ? { _id: l.assignedTo, name: names[String(l.assignedTo)] } : null, team: team ? { _id: team._id, name: team.name } : null,
     seekerFlag, nextFollowUp,
     whatsapp: whatsappState(waEnabled, waOptIn),
+    maskedCallAvailable,
   };
 }
 

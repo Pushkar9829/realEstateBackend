@@ -14,6 +14,7 @@
     "seed:demo": "node scripts/seed-demo-data.js",
     "demo:coverage": "node scripts/demo-coverage.js",
     "routes": "node scripts/print-routes.js",
+    "indexes": "node scripts/create-indexes.js",
     "test": "jest --runInBand",
     "demo:photos": "node scripts/demo-real-photos.js"
   },
