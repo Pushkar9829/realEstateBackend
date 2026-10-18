@@ -7,7 +7,7 @@ const { connectDb, disconnectDb } = require('../src/config/db');
 const { User } = require('../src/modules/auth/models');
 const { Master, Page, AgreementTemplate } = require('../src/modules/cms/models');
 const { ensureBaseMasters } = require('../src/modules/cms/baseMasters');
-const DEFAULT_PAGES = require('./default-pages');
+const DEFAULT_PAGES = [...require('./default-pages'), ...require('./default-content-pages')];
 
 const CITY = { code: 'pune', name: 'Pune', state: 'Maharashtra', centroid: [73.8567, 18.5204] };
 const LOCALITIES = [['baner', 'Baner', [73.7868, 18.559]], ['wakad', 'Wakad', [73.7629, 18.5975]], ['kharadi', 'Kharadi', [73.9416, 18.5515]],

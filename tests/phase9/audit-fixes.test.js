@@ -104,3 +104,14 @@ describe('[Infra] indexes added by the audit', () => {
     expect(ui.some((i) => i.key.createdAt === 1 && i.expireAfterSeconds != null && i.partialFilterExpression)).toBe(true);
   });
 });
+
+describe('[L][public] P8 lister-faq page for "List your property"', () => {
+  test('ships as a default content page (seeded, published) with question / answer blocks', () => {
+    const pages = require('../../scripts/default-content-pages');
+    const faq = pages.find((p) => p.slug === 'lister-faq');
+    expect(faq).toBeTruthy();
+    const blocks = faq.content.split(/\n{2,}/).map((b) => b.split('\n'));
+    expect(blocks.length).toBeGreaterThanOrEqual(3);
+    blocks.forEach((b) => { expect(b[0]).toMatch(/\?$/); expect(b.slice(1).join(' ').length).toBeGreaterThan(20); });
+  });
+});
