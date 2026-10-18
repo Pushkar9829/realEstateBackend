@@ -46,3 +46,17 @@ Background work (no Redis): `deals.claims` (5 min), `deals.sla` (hourly), `recei
 ## Deploy (Render)
 
 Use `render.yaml` as a Blueprint, set the `sync: false` secrets (MongoDB Atlas URI, Cloudinary, SMTP, MSG91, ENCRYPTION_KEY), then run `npm run seed` once from the Render shell.
+
+## Control Center adapter (optional)
+
+The central Control Center (control-center/, contract in control-center/docs/CC_CONTRACT.md) monitors and governs this platform through signed calls to `/api/cc/*` and signs owners in through `POST /api/auth/cc-sso` (frontend route `/sso/cc`, Control bar on the admin panel). Code: `src/modules/control/` (`provider.js` holds this platform's specifics). **Nothing changes until `CC_KEY_ID` and `CC_SECRET` are both set.**
+
+| Variable | Meaning |
+|---|---|
+| `CC_KEY_ID` | Control Center key id for this platform (`X-CC-Key`) |
+| `CC_SECRET` | HMAC secret, 32+ characters |
+| `CC_ALLOWED_SCOPES` | scopes granted, comma list (default `ops.read`; full: `ops.read,ops.write,staff.read,staff.write,settings.read,settings.write,keys.write`) |
+| `CC_JWKS_URL` | Control Center public keys (`https://<cc-api>/.well-known/jwks.json`); single sign-on is off without it |
+| `CC_SECRET_PREVIOUS`, `CC_ISSUER` (control-center), `CC_AUDIENCE` (realestate), `CC_SSO_ROLES` (superadmin,admin) | optional |
+
+Frontend: `VITE_CC_ENABLED=true` shows the maintenance banner set from the Control Center (no request is made without it). Local development keys: control-center/docs/PLATFORM_SETUP.md.
