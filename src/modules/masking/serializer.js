@@ -3,32 +3,42 @@
 // address line, exact pin, ownership proofs, commission and agreement never
 // leave the API through a public endpoint.
 const settings = require('../../core/settings');
+const { istDate } = require('../../core/format');
 
-const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' }) : '');
+const fmtDate = (d) => istDate(d); // dd/mm/yyyy, as in the web app
 const BADGE_LABEL = { owner: 'Verified Owner', landlord: 'Verified Landlord', builder: 'Verified Builder' };
+// labelCode: stable code the web app translates (property.badgeLabel.<code>);
+// label stays English for API consumers. brand is data, never translated.
+const LABEL_CODE = { owner: 'verified_owner', landlord: 'verified_landlord', builder: 'verified_builder' };
+
+function listerBadgeInfo(lister) {
+  const brand = lister && lister.listerType === 'builder' && lister.brand && lister.brand.approved && lister.brand.name ? lister.brand.name : undefined;
+  return { labelCode: (lister && LABEL_CODE[lister.listerType]) || 'verified_lister', brand };
+}
 
 function listerBadge(lister) {
   if (!lister) return 'Verified Lister';
   const base = BADGE_LABEL[lister.listerType] || 'Verified Lister';
-  return lister.listerType === 'builder' && lister.brand && lister.brand.approved && lister.brand.name ? `${base} · ${lister.brand.name}` : base; // RE-B-02: "Verified Builder · <brand>" once approved
+  const { brand } = listerBadgeInfo(lister);
+  return brand ? `${base} · ${brand}` : base; // RE-B-02: "Verified Builder · <brand>" once approved
 }
 
 // RE-B-13: badges computed from listing and lister data, each with a tooltip that never names anyone.
 function badges(p, lister, now = new Date()) {
   const out = [];
   if (lister && lister.kyc && lister.kyc.status === 'verified') {
-    out.push({ code: 'verified_lister', label: listerBadge(lister), verifiedAt: p.liveAt, tooltip: `Our team checked the ${lister.listerType || 'lister'}'s ID and ownership documents before this listing went live on ${fmtDate(p.liveAt)}.` });
+    out.push({ code: 'verified_lister', label: listerBadge(lister), ...listerBadgeInfo(lister), verifiedAt: p.liveAt, tooltip: `Our team checked the ${lister.listerType || 'lister'}'s ID and ownership documents before this listing went live on ${fmtDate(p.liveAt)}.` });
   }
   const ph = p.verification && p.verification.photo;
   if (ph && ph.status === 'verified' && (!ph.expiresAt || new Date(ph.expiresAt) > now)) {
-    out.push({ code: 'photo_verified', label: 'Photo verified', verifiedAt: ph.verifiedAt, tooltip: `Photos taken at the property with a location check on ${fmtDate(ph.verifiedAt)} and reviewed by our team.` });
+    out.push({ code: 'photo_verified', labelCode: 'photo_verified', label: 'Photo verified', verifiedAt: ph.verifiedAt, tooltip: `Photos taken at the property with a location check on ${fmtDate(ph.verifiedAt)} and reviewed by our team.` });
   }
   const st = p.verification && p.verification.site;
   if (st && st.status === 'verified' && (!st.expiresAt || new Date(st.expiresAt) > now)) {
-    out.push({ code: 'site_verified', label: 'Site verified', verifiedAt: st.verifiedAt, tooltip: `Our field team visited this property on ${fmtDate(st.verifiedAt)}.` });
+    out.push({ code: 'site_verified', labelCode: 'site_verified', label: 'Site verified', verifiedAt: st.verifiedAt, tooltip: `Our field team visited this property on ${fmtDate(st.verifiedAt)}.` });
   }
   if (p.rera && (p.rera.numbers || []).length) {
-    out.push({ code: 'rera', label: 'RERA registered', tooltip: `RERA number ${p.rera.numbers.join(', ')} - check it on the official RERA website.` });
+    out.push({ code: 'rera', labelCode: 'rera', label: 'RERA registered', reraNumbers: p.rera.numbers, tooltip: `RERA number ${p.rera.numbers.join(', ')} - check it on the official RERA website.` });
   }
   return out;
 }
@@ -63,7 +73,8 @@ function toPublicCard(p, lister, s) {
     bhk: p.details && p.details.bhk, baths: p.details && p.details.baths, areaSqft: p.details && p.details.areaSqft, furnishing: p.details && p.details.furnishing,
     possession: p.details && p.details.possession && p.details.possession.status,
     cover: cover ? { url: cover.thumbUrl || cover.url } : undefined, photoCount: (p.media && p.media.photos || []).length,
-    listerBadge: listerBadge(lister), badges: badges(p, lister).map(({ code, label }) => ({ code, label })),
+    listerBadge: listerBadge(lister), listerBadgeCode: listerBadgeInfo(lister).labelCode, listerBrand: listerBadgeInfo(lister).brand,
+    badges: badges(p, lister).map(({ code, label, labelCode, brand }) => ({ code, label, labelCode, brand })),
     featured: Boolean(p.featured && p.featured.on && (!p.featured.until || new Date(p.featured.until) > new Date())),
     point: point(p, s), postedAt: p.liveAt,
   };
