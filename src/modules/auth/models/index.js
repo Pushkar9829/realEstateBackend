@@ -112,6 +112,7 @@ const refreshTokenSchema = new mongoose.Schema({
   expiresAt: { type: Date, required: true },
   revokedAt: Date,
   replacedBy: String,
+  graceUsedAt: { type: Date, default: null }, // the one reuse allowed within the grace window (session.service)
   ip: String,
   ua: String,
   lastUsedAt: Date,

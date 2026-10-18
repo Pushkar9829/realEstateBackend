@@ -1,6 +1,11 @@
 // Sessions = refresh-token families. Each login starts a family; every
 // refresh rotates the token inside it. Presenting an already-rotated token is
 // treated as theft: the whole family is revoked (spec 4.1 workflow step 5).
+// Grace: a refresh cut off by a page reload (or two tabs refreshing at once
+// with the shared stored token) never delivers the new token to the browser,
+// which then sends the previous one again. The immediately previous token is
+// therefore accepted ONCE within REUSE_GRACE_SECONDS of its rotation while its
+// successor is still live; any other reuse revokes the family.
 const crypto = require('crypto');
 const { RefreshToken, LoginHistory } = require('../models');
 const { ApiError } = require('../../../core/http');
@@ -9,6 +14,8 @@ const { signAccess, ACCESS_TTL } = require('../../../core/security/jwt');
 const { securityEvent } = require('../../../core/audit');
 const settings = require('../../../core/settings');
 const env = require('../../../config/env');
+
+const REUSE_GRACE_SECONDS = 30;
 
 const clientInfo = (req) => ({ ip: req.ip, ua: String(req.headers['user-agent'] || '').slice(0, 300) });
 
@@ -45,7 +52,14 @@ async function rotate(refreshToken, req) {
   const { User } = require('../models');
   const doc = await RefreshToken.findOne({ tokenHash: sha256(refreshToken) });
   if (!doc) throw ApiError.unauthenticated('Invalid refresh token', 'INVALID_REFRESH');
-  if (doc.revokedAt) {
+  let graced = false;
+  if (doc.revokedAt && doc.replacedBy && Date.now() - doc.revokedAt.getTime() <= REUSE_GRACE_SECONDS * 1000
+    && await RefreshToken.exists({ tokenHash: doc.replacedBy, revokedAt: null })) {
+    // Claim the one-time grace atomically so two concurrent retries cannot both pass.
+    graced = Boolean(await RefreshToken.findOneAndUpdate({ _id: doc._id, graceUsedAt: null }, { $set: { graceUsedAt: new Date() } }));
+    if (graced) await securityEvent(req, 'token.reuse_grace', { userId: doc.userId, meta: { familyId: doc.familyId } });
+  }
+  if (doc.revokedAt && !graced) {
     if (doc.replacedBy) { // a rotated token came back: likely stolen
       await RefreshToken.updateMany({ familyId: doc.familyId, revokedAt: null }, { $set: { revokedAt: new Date() } });
       await securityEvent(req, 'token.reuse_detected', { userId: doc.userId, meta: { familyId: doc.familyId } });
@@ -57,9 +71,11 @@ async function rotate(refreshToken, req) {
   if (!user || user.status !== 'active') throw ApiError.unauthenticated('Account is not active', 'INVALID_REFRESH');
 
   const next = await newRefresh(user._id, doc.familyId, req);
-  doc.revokedAt = new Date();
-  doc.replacedBy = sha256(next);
-  await doc.save();
+  if (!graced) { // a graced token keeps its first successor (another tab may hold it)
+    doc.revokedAt = new Date();
+    doc.replacedBy = sha256(next);
+    await doc.save();
+  }
   return { accessToken: signAccess(user, doc.familyId), refreshToken: next, tokenType: 'Bearer', expiresIn: ACCESS_TTL };
 }
 
@@ -94,4 +110,4 @@ async function isKnownDevice(userId, req) {
   return Boolean(await LoginHistory.exists({ userId, success: true, ip, ua }));
 }
 
-module.exports = { start, rotate, revokeFamily, revokeByToken, revokeAll, list, isKnownDevice, clientInfo };
+module.exports = { REUSE_GRACE_SECONDS, start, rotate, revokeFamily, revokeByToken, revokeAll, list, isKnownDevice, clientInfo };

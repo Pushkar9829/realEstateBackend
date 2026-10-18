@@ -9,6 +9,8 @@ const { Lead } = require('../../src/modules/leads/models');
 const { ExportJob } = require('../../src/modules/reports/models');
 const notify = require('../../src/core/notify');
 const jobs = require('../../src/core/jobs');
+const { SecurityEvent } = require('../../src/core/audit');
+const { sha256 } = require('../../src/core/security/crypto');
 
 let app; let superadmin;
 beforeAll(async () => {
@@ -147,8 +149,33 @@ describe('[M][public] RE-M-04 Tokens and sessions', () => {
     const t = await h.loginFull(app, acct.email, acct.password);
     const r1 = await request(app).post('/api/auth/refresh').send({ refreshToken: t.refreshToken });
     expect(r1.status).toBe(200);
+    // rotated 31 s ago: outside the 30 s reload grace, so this is treated as theft
+    await RefreshToken.updateOne({ tokenHash: sha256(t.refreshToken) }, { $set: { revokedAt: new Date(Date.now() - 31000) } });
     expect((await request(app).post('/api/auth/refresh').send({ refreshToken: t.refreshToken })).status).toBe(401);
     expect((await request(app).post('/api/auth/refresh').send({ refreshToken: r1.body.data.refreshToken })).status).toBe(401);
+  });
+
+  test('a refresh cut off by a reload or a second tab: the previous token works once within 30 s, a second reuse revokes the family', async () => {
+    const acct = await h.registerActive(app, 'buyer');
+    const t = await h.loginFull(app, acct.email, acct.password);
+    const r1 = await request(app).post('/api/auth/refresh').send({ refreshToken: t.refreshToken }); // response lost by the reload
+    expect(r1.status).toBe(200);
+    const retry = await request(app).post('/api/auth/refresh').send({ refreshToken: t.refreshToken });
+    expect(retry.status).toBe(200); // grace: the same session continues
+    expect(retry.body.data.refreshToken).not.toBe(r1.body.data.refreshToken);
+    expect((await request(app).post('/api/auth/refresh').send({ refreshToken: retry.body.data.refreshToken })).status).toBe(200);
+    expect(await SecurityEvent.exists({ type: 'token.reuse_grace' })).toBeTruthy();
+    const again = await request(app).post('/api/auth/refresh').send({ refreshToken: t.refreshToken });
+    expect(again.status).toBe(401); // the grace is used up: the theft rule applies
+    expect((await request(app).post('/api/auth/refresh').send({ refreshToken: r1.body.data.refreshToken })).status).toBe(401); // family revoked
+  });
+
+  test('two concurrent retries of the same previous token: only one gets the grace', async () => {
+    const acct = await h.registerActive(app, 'buyer');
+    const t = await h.loginFull(app, acct.email, acct.password);
+    expect((await request(app).post('/api/auth/refresh').send({ refreshToken: t.refreshToken })).status).toBe(200);
+    const [x, y] = await Promise.all([1, 2].map(() => request(app).post('/api/auth/refresh').send({ refreshToken: t.refreshToken })));
+    expect([x.status, y.status].sort()).toEqual([200, 401]);
   });
 
   test('sessions list marks the current one; logout-all revokes everything', async () => {
