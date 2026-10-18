@@ -19,6 +19,7 @@ const { audit } = require('../../core/audit');
 const logger = require('../../core/logger');
 const { notifyUser, notifyLeadBuyer } = require('../notifications/service');
 const common = require('./common');
+const hub = require('./hub');
 const slots = require('./slots.service');
 const seeker = require('../kyc/seeker.service');
 
@@ -217,6 +218,7 @@ async function enquiry(body, req, opts = {}) {
   if (d.type === 'site_visit') visit = await requestVisit(lead, target, listerId, d.preferredSlot, { pickupNeeded: d.pickupNeeded });
   if (d.propertyId) await Property.updateOne({ _id: d.propertyId }, { $inc: { 'stats.enquiries': 1 } });
   await recordConsent(buyer, d, req);
+  await hub.created(lead, target, { whatsapp: d.whatsappOptIn, utm: d.utm });
   await acknowledge(lead, buyer, { listingNo: target.listingNo || target.projectNo });
   const lister = await User.findById(listerId);
   if (lister) await notifyUser({ user: lister, event: 'lead.lister_new', vars: { listingNo: target.listingNo || target.projectNo, buyerLabel: lead.buyerLabel } });
@@ -249,6 +251,7 @@ async function contactForm(body, req) {
   await common.route(lead, { city: d.city, source: 'contact_form' });
   await lead.save();
   await recordConsent(buyer, d, req);
+  await hub.created(lead);
   await acknowledge(lead, buyer);
   return { leadNo: lead.leadNo };
 }
@@ -283,7 +286,7 @@ async function requirement(body, req) {
     await common.route(lead, { city: d.city, localities: d.localities, purpose: d.purpose, category: d.category, budget: d.budgetMax || d.budgetMin, source: 'requirement' });
   }
   await lead.save();
-  if (!merged) { await recordConsent(buyer, d, req); await acknowledge(lead, buyer); }
+  if (!merged) { await recordConsent(buyer, d, req); await hub.created(lead, null, { utm: d.utm }); await acknowledge(lead, buyer); }
   let savedSearchId;
   if (d.alertMe && req.user) {
     const search = require('../search/service');

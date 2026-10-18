@@ -14,9 +14,11 @@ const { hmacSha256 } = require('../security/crypto');
 const BACKOFF_MIN = [1, 5, 15, 60, 360];
 const MAX_AGE_MS = 7 * 24 * 3600 * 1000;
 
-async function record(type, data, { session, aggregateId } = {}) {
+// schemaVersion: '1' marks the hub's canonical v1 envelope (lead events); the
+// original MLM events keep the RE-1 shape the hub accepts unchanged.
+async function record(type, data, { session, aggregateId, schemaVersion } = {}) {
   const eventId = uuid();
-  const payload = { eventId, type, occurredAt: new Date().toISOString(), platform: 'realestate', data };
+  const payload = { eventId, type, ...(schemaVersion ? { schemaVersion } : {}), occurredAt: new Date().toISOString(), platform: 'realestate', data };
   const [doc] = await Outbox.create([{ eventId, type, aggregateId, payload }], { session });
   return doc;
 }
@@ -34,7 +36,8 @@ function sign(rawBody) {
 async function deliver(doc, { enabled, sendUnreferred }) {
   const d = doc.payload.data || {};
   const referred = d.referralCode || (d.buyer && d.buyer.referralCode) || (d.lister && d.lister.referralCode);
-  if (!referred && !sendUnreferred) {
+  // Lead events go to the central lead desk whether or not the person was referred.
+  if (!referred && !sendUnreferred && !String(doc.type).startsWith('lead.')) {
     await Outbox.updateOne({ _id: doc._id }, { status: 'skipped_unreferred' });
     return;
   }

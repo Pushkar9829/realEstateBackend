@@ -130,6 +130,8 @@ async function changeStage(lead, to, by, { note, lostReason, lostNote, system = 
   lead.stage = to;
   if (to === 'closed_won') lead.closedAt = new Date();
   entry(lead, 'stage', by, { from, to, note, lostReason });
+  // Central lead desk: the platform status of the lead (deal wins convert there via deal.closed).
+  if (!(system && to === 'closed_won')) await require('./hub').updated(lead, { platformStatus: to.slice(0, 40), ...(lostReason ? { note: `Lost: ${lostReason}` } : {}) });
   return lead;
 }
 
