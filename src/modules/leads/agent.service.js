@@ -181,6 +181,7 @@ async function detail(user, id) {
     followups, offers, properties: linked, reassignRequests: l.reassignRequests,
     deal, agent: l.assignedTo ? { _id: l.assignedTo, name: names[String(l.assignedTo)] } : null, team: team ? { _id: team._id, name: team.name } : null,
     seekerFlag, nextFollowUp,
+    hub: l.hub && l.hub.lastEvent ? l.hub : null, // Growth Hub lead desk status (webhooks), read-only
     whatsapp: whatsappState(waEnabled, waOptIn),
     maskedCallAvailable,
   };

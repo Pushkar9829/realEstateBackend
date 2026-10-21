@@ -47,6 +47,18 @@ Background work (no Redis): `deals.claims` (5 min), `deals.sla` (hourly), `recei
 
 Use `render.yaml` as a Blueprint, set the `sync: false` secrets (MongoDB Atlas URI, Cloudinary, SMTP, MSG91, ENCRYPTION_KEY), then run `npm run seed` once from the Render shell.
 
+## Growth Hub (MLM engine) integration (optional)
+
+Outbox events (`deal.closed`, `deal.reversed`, `user.signup`, `lead.created`, `lead.updated`) go to the hub signed with HMAC-SHA256 (`src/core/outbox`). The hub reports lead status back through a signed webhook (`src/modules/leads/hubWebhook.service.js`, contract `mlm-engine/docs/INTEGRATION_CONTRACT.md` section 8). Real Estate reads only the `MLM_*` names.
+
+| Variable | Meaning |
+|---|---|
+| `MLM_ENGINE_URL` | hub origin without `/api` (events go to `<url>/api/integrations/realestate/events`); sending also needs admin setting `mlm.enabled` |
+| `MLM_PLATFORM_KEY` | platform key id `pk_realestate_...` (`X-Platform-Key`) |
+| `MLM_PLATFORM_SECRET` | `whsec_...`: signs outgoing events and verifies incoming hub webhooks. **The webhook `POST /api/integrations/hub/webhooks` answers 404 until it is set** |
+
+Hub webhook: configure `https://<api>/api/integrations/hub/webhooks` in hub admin > Platforms and keys > `realestate` > Webhooks (events `lead.accepted`, `lead.assigned`, `lead.status_changed`, `lead.converted`). The receiver checks `X-Hub-Signature` = HMAC(`MLM_PLATFORM_SECRET`, `X-Hub-Timestamp + "." + rawBody`) (or `X-Hub-Signature-Previous` during a hub secret rotation), refuses timestamps outside 300 s (401, security event), answers a repeated `X-Hub-Delivery-Id` with 200 and no change, and stores the hub status on the lead whose `leadNo` equals `externalLeadId` (field `hub`, a `hub` timeline entry, audit `lead.hub_status`). The hub's "Send test" and unknown leads are acknowledged and ignored.
+
 ## Control Center adapter (optional)
 
 The central Control Center (control-center/, contract in control-center/docs/CC_CONTRACT.md) monitors and governs this platform through signed calls to `/api/cc/*` and signs owners in through `POST /api/auth/cc-sso` (frontend route `/sso/cc`, Control bar on the admin panel). Code: `src/modules/control/` (`provider.js` holds this platform's specifics). **Nothing changes until `CC_KEY_ID` and `CC_SECRET` are both set.**

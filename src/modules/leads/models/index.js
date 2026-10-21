@@ -67,6 +67,13 @@ const leadSchema = new mongoose.Schema({
   utm: { source: String, medium: String, campaign: String },
   closedAt: Date,
   anonymisedAt: Date,
+  // Latest status from the Growth Hub lead desk (signed webhooks, hubWebhook.service.js). Never contact data;
+  // the platform's own stage, assignment and SLA are not changed by it.
+  hub: {
+    hubLeadId: String, leadNo: String, stage: String, stageLabel: String, status: String,
+    ownerDisplayName: String, nextFollowUpAt: Date, lostReason: String, conversion: mongoose.Schema.Types.Mixed,
+    outcome: String, mergedIntoLeadNo: String, lastEvent: String, occurredAt: Date, receivedAt: Date,
+  },
 }, { timestamps: true });
 leadSchema.index({ 'buyer.phone': 1, propertyId: 1, createdAt: -1 }); // 7-day duplicate merge
 leadSchema.index({ assignedTo: 1, stage: 1, lastActivityAt: -1 });
@@ -160,6 +167,19 @@ const listerUpdateSchema = new mongoose.Schema({
   by: ObjectId,
 }, { timestamps: true });
 
+// Growth Hub -> platform webhook deliveries: dedupe on X-Hub-Delivery-Id (same id on retries).
+const hubWebhookSchema = new mongoose.Schema({
+  deliveryId: { type: String, required: true, unique: true },
+  event: String,
+  platform: String,
+  externalLeadId: String,
+  occurredAt: Date,
+  test: Boolean,
+  result: { type: String, enum: ['received', 'processed', 'ignored'], default: 'received' },
+  note: String,
+}, { timestamps: true });
+hubWebhookSchema.index({ createdAt: 1 }, { expireAfterSeconds: 90 * 24 * 3600 }); // hub retries stop after 72 h
+
 module.exports = {
   BuyerContact: mongoose.model('BuyerContact', buyerContactSchema),
   Lead: mongoose.model('Lead', leadSchema),
@@ -168,4 +188,5 @@ module.exports = {
   VisitAvailability: mongoose.model('VisitAvailability', visitAvailabilitySchema),
   Offer: mongoose.model('Offer', offerSchema),
   ListerUpdate: mongoose.model('ListerUpdate', listerUpdateSchema),
+  HubWebhook: mongoose.model('HubWebhook', hubWebhookSchema),
 };
